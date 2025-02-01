@@ -9,11 +9,16 @@
   "routes": [
     {
       "src": "/api/webhook",
-      "dest": "api/express-webhook.js"
+      "dest": "/api/express-webhook.js"
     },
     {
       "src": "/health",
-      "dest": "api/express-webhook.js"
+      "dest": "/api/express-webhook.js"
     }
-  ]
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "BOT_TOKEN": "7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM",
+    "WEBHOOK_URL": "https://telegram-bot-4-new2025.vercel.app/api/webhook"
+  }
 }
