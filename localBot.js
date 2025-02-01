@@ -3,6 +3,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const logger = require('pino')(); // Added logger for better logging
 
+
 // Replace 'YOUR_BOT_API_TOKEN' with your actual API token
 const bot = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
 
