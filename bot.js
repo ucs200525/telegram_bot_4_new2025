@@ -552,3 +552,83 @@ if (process.env.NODE_ENV === 'development') {
 
 // Export the bot instance for testing
 module.exports.bot = bot;
+
+const logger = require('pino')();
+let bot = null; // Will be initialized with the bot instance
+
+// State management
+const userStates = new Map();
+
+// Initialize bot reference
+function init(botInstance) {
+    bot = botInstance;
+}
+
+// Command handlers
+async function handleGtCommand(ctx) {
+    userStates.set(ctx.message.from.id, 'gt');
+    await ctx.reply('Please enter city and date (e.g., Vijayawada, 2024-01-25)');
+}
+
+async function handleDgtCommand(ctx) {
+    userStates.set(ctx.message.from.id, 'dgt');
+    await ctx.reply('Please enter city and date (e.g., Vijayawada, 2024-01-25)');
+}
+
+async function handleCancelCommand(ctx) {
+    const userId = ctx.message.from.id;
+    if (userStates.has(userId)) {
+        userStates.delete(userId);
+        await ctx.reply('✅ Command cancelled');
+    } else {
+        await ctx.reply('No active command to cancel');
+    }
+}
+
+// Message handler
+async function handleTextMessage(ctx) {
+    const userId = ctx.message.from.id;
+    const activeCommand = userStates.get(userId);
+
+    if (!activeCommand || ctx.message.text.startsWith('/')) {
+        return;
+    }
+
+    try {
+        const [city, date] = ctx.message.text.split(',').map(s => s.trim());
+        
+        if (!city || !date) {
+            return ctx.reply('Please use format: City, YYYY-MM-DD');
+        }
+
+        // Show loading message
+        const loadingMsg = await ctx.reply('⌛ Processing...');
+
+        if (activeCommand === 'gt') {
+            await handleGoodTimes(ctx, city, date);
+        } else if (activeCommand === 'dgt') {
+            await handleDrikPanchang(ctx, city, date);
+        }
+
+        // Clean up
+        await loadingMsg.delete().catch(() => {});
+        userStates.delete(userId);
+
+    } catch (error) {
+        logger.error('Error processing message:', error);
+        await ctx.reply('⚠️ An error occurred. Please try again.');
+    }
+}
+
+// ... rest of your existing helper functions ...
+
+module.exports = {
+    init,
+    handleGtCommand,
+    handleDgtCommand,
+    handleCancelCommand,
+    handleTextMessage,
+    handleGoodTimes,     // Your existing function
+    handleDrikPanchang,  // Your existing function
+    userStates
+};
