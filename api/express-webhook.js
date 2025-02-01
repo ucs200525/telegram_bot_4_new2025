@@ -69,9 +69,11 @@ bot.hears(/.*/, async (messageCtx) => {
 
         switch (activeCommand) {
             case 'gt':
+                logger.info(`Processing /gt command for city: ${city}, date: ${date}`);
                 await handleGTCommand(messageCtx, city, date);
                 break;
             case 'dgt':
+                logger.info(`Processing /dgt command for city: ${city}, date: ${date}`);
                 await handleDGTCommand(messageCtx, city, date);
                 break;
         }
@@ -85,6 +87,7 @@ bot.hears(/.*/, async (messageCtx) => {
 
 // Webhook endpoint
 app.post('/api/webhook', async (req, res) => {
+    logger.info('Received webhook update:', req.body);  // Log the received update
     try {
         await bot.handleUpdate(req.body);
         res.sendStatus(200);
