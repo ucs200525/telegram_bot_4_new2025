@@ -3,17 +3,23 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const logger = require('pino')(); // Added logger for better logging
 
-// Replace 'YOUR_BOT_API_TOKEN' with your actual API token
-const bot = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
-
-// Add state management
+// Initialize bot and state management
+let bot = null; // Will be initialized with init()
 const userStates = new Map();
-
-// Add loading messages constant
 const LOADING_MESSAGES = {
     gt: '⏳ Calculating auspicious times...',
-    dgt: '⏳ Fetching Drik Panchang data...',
+    dgt: '⏳ Fetching Drik Panchang data...'
 };
+
+// Initialize bot reference
+function init(botInstance) {
+    bot = botInstance;
+    logger.info('Bot instance initialized');
+}
+
+// Replace 'YOUR_BOT_API_TOKEN' with your actual API token
+const botInstance = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
+init(botInstance);
 
 // Function to fetch GeoName ID based on city
 async function getGeoNameId(city) {
@@ -186,7 +192,7 @@ const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, curr
 };
 
 // Command handlers - place these before hears handler
-bot.command('start', async (ctx) => {
+botInstance.command('start', async (ctx) => {
     const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏
 
 I can help you find auspicious times and Muhurat timings.
@@ -199,7 +205,7 @@ Start by trying one of these commands:
     await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
 });
 
-bot.command('help', async (ctx) => {
+botInstance.command('help', async (ctx) => {
     const helpMessage = `✨ *Panchang Bot Commands* ✨
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 🔹 /start - Start the bot
@@ -224,17 +230,17 @@ Vijayawada, 2024-01-25
     await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
 });
 
-bot.command('gt', async (ctx) => {
+botInstance.command('gt', async (ctx) => {
     userStates.set(ctx.message.from.id, 'gt');
     await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
 });
 
-bot.command('dgt', async (ctx) => {
+botInstance.command('dgt', async (ctx) => {
     userStates.set(ctx.message.from.id, 'dgt');
     await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
 });
 
-bot.command('cancel', async (ctx) => {
+botInstance.command('cancel', async (ctx) => {
     const userId = ctx.message.from.id;
     if (userStates.has(userId)) {
         userStates.delete(userId);
@@ -256,7 +262,7 @@ const formatDate = (dateString) => {
 };
 
 // Modify the hears handler to only process messages when there's an active command
-bot.hears(/.*/, async (messageCtx) => {
+botInstance.hears(/.*/, async (messageCtx) => {
     const userId = messageCtx.message.from.id;
     const activeCommand = userStates.get(userId);
     const messageText = messageCtx.message.text;
@@ -520,7 +526,7 @@ module.exports = async (req, res) => {
         }
 
         // Handle the update
-        await bot.handleUpdate(req.body);
+        await botInstance.handleUpdate(req.body);
         
         // Send success response
         res.status(200).json({ ok: true });
@@ -534,14 +540,14 @@ module.exports = async (req, res) => {
 };
 
 // Add webhook error handling
-bot.catch((err, ctx) => {
+botInstance.catch((err, ctx) => {
     logger.error('Bot error:', err);
     ctx.reply('⚠️ An error occurred. Please try again later.');
 });
 
 // Initialize webhook mode (for local testing)
 if (process.env.NODE_ENV === 'development') {
-    bot.launch().then(() => {
+    botInstance.launch().then(() => {
         logger.info('Bot is running in development mode...');
     }).catch((error) => {
         logger.error('Error launching bot:', error);
@@ -551,84 +557,21 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // Export the bot instance for testing
-module.exports.bot = bot;
+module.exports.bot = botInstance;
 
-const logger = require('pino')();
-let bot = null; // Will be initialized with the bot instance
-
-// State management
-const userStates = new Map();
-
-// Initialize bot reference
-function init(botInstance) {
-    bot = botInstance;
-}
-
-// Command handlers
-async function handleGtCommand(ctx) {
-    userStates.set(ctx.message.from.id, 'gt');
-    await ctx.reply('Please enter city and date (e.g., Vijayawada, 2024-01-25)');
-}
-
-async function handleDgtCommand(ctx) {
-    userStates.set(ctx.message.from.id, 'dgt');
-    await ctx.reply('Please enter city and date (e.g., Vijayawada, 2024-01-25)');
-}
-
-async function handleCancelCommand(ctx) {
-    const userId = ctx.message.from.id;
-    if (userStates.has(userId)) {
-        userStates.delete(userId);
-        await ctx.reply('✅ Command cancelled');
-    } else {
-        await ctx.reply('No active command to cancel');
-    }
-}
-
-// Message handler
-async function handleTextMessage(ctx) {
-    const userId = ctx.message.from.id;
-    const activeCommand = userStates.get(userId);
-
-    if (!activeCommand || ctx.message.text.startsWith('/')) {
-        return;
-    }
-
-    try {
-        const [city, date] = ctx.message.text.split(',').map(s => s.trim());
-        
-        if (!city || !date) {
-            return ctx.reply('Please use format: City, YYYY-MM-DD');
-        }
-
-        // Show loading message
-        const loadingMsg = await ctx.reply('⌛ Processing...');
-
-        if (activeCommand === 'gt') {
-            await handleGoodTimes(ctx, city, date);
-        } else if (activeCommand === 'dgt') {
-            await handleDrikPanchang(ctx, city, date);
-        }
-
-        // Clean up
-        await loadingMsg.delete().catch(() => {});
-        userStates.delete(userId);
-
-    } catch (error) {
-        logger.error('Error processing message:', error);
-        await ctx.reply('⚠️ An error occurred. Please try again.');
-    }
-}
-
-// ... rest of your existing helper functions ...
-
+// Export all necessary functions and objects
 module.exports = {
     init,
     handleGtCommand,
     handleDgtCommand,
     handleCancelCommand,
     handleTextMessage,
-    handleGoodTimes,     // Your existing function
-    handleDrikPanchang,  // Your existing function
-    userStates
+    handleGoodTimes,
+    handleDrikPanchang,
+    userStates,
+    // Helper functions
+    getGeoNameId,
+    createDrikTable,
+    getPanchangamData,
+    updateTable
 };
