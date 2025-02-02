@@ -1,20 +1,19 @@
 {
-    "version": 2,
-    "builds": [
-      {
-        "src": "api/express-webhook.js",
-        "use": "@vercel/node"
-      }
-    ],
-    "routes": [
-      {
-        "src": "/api/webhook",
-        "dest": "/api/express-webhook.js"
-      },
-      {
-        "src": "/api/health",
-        "dest": "/api/express-webhook.js"
-      }
-    ]
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/express-webhook.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/express-webhook.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "BOT_TOKEN": "7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM"
   }
-  
+}

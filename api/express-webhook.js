@@ -22,20 +22,31 @@ bot.command('cancel', botLogic.handleCancelCommand);
 // Handle text messages
 bot.on('text', botLogic.handleTextMessage);
 
-// Webhook handler
-app.post('/webhook', async (req, res) => {
+// Default route for webhook
+app.all('*', async (req, res) => {
     try {
-        logger.info('Received webhook update');
-        await bot.handleUpdate(req.body);
-        res.sendStatus(200);
+        if (req.method === 'POST') {
+            logger.info('Received webhook update');
+            await bot.handleUpdate(req.body);
+            return res.status(200).json({ ok: true });
+        }
+        
+        // Health check for GET requests
+        if (req.method === 'GET') {
+            return res.status(200).json({ 
+                status: 'OK',
+                timestamp: new Date().toISOString(),
+                environment: process.env.NODE_ENV
+            });
+        }
+
+        res.status(405).json({ error: 'Method not allowed' });
     } catch (error) {
         logger.error('Webhook error:', error);
-        res.status(500).send();
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-// Health check
-app.get('/health', (_, res) => res.send('OK'));
-
+// Export the Express app
 module.exports = app;
 module.exports.bot = bot;
