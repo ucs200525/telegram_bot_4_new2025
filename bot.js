@@ -562,16 +562,43 @@ module.exports.bot = botInstance;
 // Export all necessary functions and objects
 module.exports = {
     init,
-    handleGtCommand,
-    handleDgtCommand,
-    handleCancelCommand,
-    handleTextMessage,
-    handleGoodTimes,
-    handleDrikPanchang,
+    handleGtCommand: async (ctx) => {
+        userStates.set(ctx.message.from.id, 'gt');
+        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
+    },
+    handleDgtCommand: async (ctx) => {
+        userStates.set(ctx.message.from.id, 'dgt');
+        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
+    },
+    handleCancelCommand: async (ctx) => {
+        const userId = ctx.message.from.id;
+        if (userStates.has(userId)) {
+            userStates.delete(userId);
+            await ctx.reply('✅ Command cancelled. You can start a new command with /gt or /dgt');        } else {
+            await ctx.reply('No active command to cancel. Use /help to see available commands.');
+        }
+    },
+    handleTextMessage: async (ctx) => {
+        const userId = ctx.message.from.id;
+        const activeCommand = userStates.get(userId);
+        if (!activeCommand || ctx.message.text.startsWith('/')) return;
+
+        try {
+            const [city, date] = ctx.message.text.split(',').map(s => s.trim());
+            if (!city || !date) {
+                return ctx.reply('Please use format: City, YYYY-MM-DD');
+            }
+            if (activeCommand === 'gt') {
+                await handleGTCommand(ctx, city, date);
+            } else if (activeCommand === 'dgt') {
+                await handleDGTCommand(ctx, city, date);
+            }
+            userStates.delete(userId);
+        } catch (error) {
+            logger.error('Error:', error);
+            ctx.reply('⚠️ An error occurred. Please try again.');
+        }
+    },
     userStates,
-    // Helper functions
-    getGeoNameId,
-    createDrikTable,
-    getPanchangamData,
-    updateTable
+    bot: botInstance
 };

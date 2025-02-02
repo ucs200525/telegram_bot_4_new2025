@@ -12,7 +12,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAHIWiU5yvfIzo7eJW
 // Share the bot instance with the bot logic
 botLogic.init(bot);
 
-// Register commands
+// Register commands with correct function names
 bot.command('start', ctx => ctx.reply('🙏 Welcome! Use /help to see commands', { parse_mode: 'Markdown' }));
 bot.command('help', ctx => ctx.reply('✨ Commands:\n/gt - Get good times\n/dgt - Get Drik timings', { parse_mode: 'Markdown' }));
 bot.command('gt', botLogic.handleGtCommand);
