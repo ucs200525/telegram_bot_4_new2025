@@ -481,40 +481,31 @@ async function handleGTCommand(messageCtx) {
 // Handler for DGT command
 async function handleDGTCommand(messageCtx, city, date) {
     try {
-        // Send loading message
-        const loadingMsg = await messageCtx.reply(LOADING_MESSAGES.dgt);
-        
         const drikTable = await createDrikTable(city, date);
 
-        // Delete loading message
-        await loadingMsg.delete().catch(() => {});
-
-        let responseMessage = `🕉️ *Drik Panchang Timings* 🕉️\n`;
+        let responseMessage = `✨ Drik Panchang Timings ✨\n`;
         responseMessage += `📍 ${city} | 📅 ${date}\n`;
         responseMessage += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-        if (drikTable.length === 0) {
-            responseMessage += "No muhurat data available for this date.\n";
-        } else {
-            drikTable.forEach((row, index) => {
-                responseMessage += `${index + 1}. 📿 ${row.muhurat}\n`;
-                if (row.category) {
-                    responseMessage += `   └─ 📝 Category: ${row.category}\n`;
-                }
-                responseMessage += `   └─ ⏰ Time: ${row.time}\n`;
-                responseMessage += `   ─────────────────────\n\n`;
-            });
-        }
+        drikTable.forEach((row, index) => {
+            responseMessage += `${index + 1}. 🕮 ${row.muhurat}\n`;
+            if (row.category) {
+                responseMessage += `   └─ 📝 Category: ${row.category}\n`;
+            }
+            responseMessage += `   └─ ⏰ Time: ${row.time}\n`;
+            responseMessage += `   ─────────────────────\n\n`;
+        });
 
         responseMessage += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        responseMessage += `🙏 Plan your activities accordingly 🙏\n`;
+        responseMessage += `💫 Plan your activities accordingly 💫\n`;
 
-        await messageCtx.reply(responseMessage, { parse_mode: 'Markdown' });
+        await messageCtx.reply(responseMessage);
     } catch (error) {
         logger.error('Error in DGT command:', error);
-        await messageCtx.reply('⚠️ Error fetching Drik Panchang data. Please try again later.');
+        throw error;
     }
 }
+
 
 // Create the webhook handler for Vercel
 module.exports = async (req, res) => {
