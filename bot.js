@@ -125,7 +125,7 @@ const getPanchangamData = async (cityName, currentDate) => {
 
     try {
         // Fetch sun times
-        const sunTimesUrl = `http://localhost:4000/api/getSunTimesForCity/${cityName}/${currentDate}`;
+        const sunTimesUrl = `https://panchang-aik9.vercel.app/api/getSunTimesForCity/${cityName}/${currentDate}`;
         logger.info(`Constructed SunTimes API URL: ${sunTimesUrl}`);
         const sunTimesResponse = await axios.get(sunTimesUrl);
         logger.info('SunTimes Response:', sunTimesResponse.data);
@@ -139,7 +139,7 @@ const getPanchangamData = async (cityName, currentDate) => {
         const sunTimes = sunTimesResponse.data.sunTimes;
 
         // Fetch weekday
-        const weekdayUrl = `http://localhost:4000/api/getWeekday/${currentDate}`;
+        const weekdayUrl = `https://panchang-aik9.vercel.app/api/getWeekday/${currentDate}`;
         logger.info(`Constructed Weekday API URL: ${weekdayUrl}`);
         const weekdayResponse = await axios.get(weekdayUrl);
         logger.info('Weekday Response:', weekdayResponse.data);
@@ -169,7 +169,7 @@ const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, curr
     logger.info('Sending data to update table...');
 
     try {
-        const tableUrl = `http://localhost:4000/api/update-table`;
+        const tableUrl = `https://panchang-aik9.vercel.app/api/update-table`;
         logger.info(`Constructed Update Table API URL: ${tableUrl}`);
 
         const tableResponse = await axios.post(tableUrl, {
@@ -304,7 +304,7 @@ botInstance.hears(/.*/, async (messageCtx) => {
 });
 
 // Handler for GT command
-async function handleGTCommand(messageCtx, city, date) {
+async function handleGTCommand(messageCtx) {
     try {
         // Send loading message
         const loadingMsg = await messageCtx.reply(LOADING_MESSAGES.gt);
@@ -338,7 +338,7 @@ async function handleGTCommand(messageCtx, city, date) {
         logger.info(`Received /gt command. Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
 
         // Constructing the API URL based on backend configuration
-        const sunTimesUrl = `http://localhost:4000/api/getSunTimesForCity/${cityName}/${currentDate}`;
+        const sunTimesUrl = `https://panchang-aik9.vercel.app/api/getSunTimesForCity/${cityName}/${currentDate}`;
         logger.info(`Constructed SunTimes API URL: ${sunTimesUrl}`);
         const response = await axios.get(sunTimesUrl);
 
@@ -347,7 +347,7 @@ async function handleGTCommand(messageCtx, city, date) {
             logger.info("Fetched SunTimes data:", sun);
 
             // Fetch the weekday
-            const weekdayUrl = `http://localhost:4000/api/getWeekday/${currentDate}`;
+            const weekdayUrl = `https://panchang-aik9.vercel.app/api/getWeekday/${currentDate}`;
             logger.info(`Constructed Weekday API URL: ${weekdayUrl}`);
             const weekdayResponse = await axios.get(weekdayUrl);
 
@@ -377,7 +377,7 @@ async function handleGTCommand(messageCtx, city, date) {
 
                         logger.info('Request Data:', JSON.stringify(requestData, null, 2));
 
-                        const response = await axios.post(`http://localhost:4000/api/update-table`, requestData);
+                        const response = await axios.post(`https://panchang-aik9.vercel.app/api/update-table`, requestData);
                         
                         // Log the content type and raw response
                         logger.info('Response Content-Type:', response.headers['content-type']);
