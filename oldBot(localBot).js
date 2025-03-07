@@ -3,23 +3,12 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const logger = require('pino')(); // Added logger for better logging
 
-// Initialize bot and state management
-let bot = null; // Will be initialized with init()
-const userStates = new Map();
-const LOADING_MESSAGES = {
-    gt: '⏳ Calculating auspicious times...',
-    dgt: '⏳ Fetching Drik Panchang data...'
-};
-
-// Initialize bot reference
-function init(botInstance) {
-    bot = botInstance;
-    logger.info('Bot instance initialized');
-}
 
 // Replace 'YOUR_BOT_API_TOKEN' with your actual API token
-const botInstance = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
-init(botInstance);
+const bot = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
+
+// Add state management
+const userStates = new Map();
 
 // Function to fetch GeoName ID based on city
 async function getGeoNameId(city) {
@@ -45,12 +34,9 @@ const fetchmuhurat = async (city, date) => {
     try {
         // Get the GeoName ID for the provided city
         const geoNameId = await getGeoNameId(city);
-        // Convert date from YYYY-MM-DD to DD/MM/YYYY
-        const [year, month, day] = date.split('-');
-        const formattedDate = `${day}/${month}/${year}`;
-        
+
         // Format the URL to include the date and GeoName ID
-        const url = `https://www.drikpanchang.com/muhurat/panchaka-rahita-muhurat.html?geoname-id=${geoNameId}&date=${formattedDate}`;
+        const url = `https://www.drikpanchang.com/muhurat/panchaka-rahita-muhurat.html?geoname-id=${geoNameId}&date=${date}`;
 
         // Fetch the HTML content from the website
         const response = await axios.get(url);
@@ -195,7 +181,7 @@ const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, curr
 };
 
 // Command handlers - place these before hears handler
-botInstance.command('start', async (ctx) => {
+bot.command('start', async (ctx) => {
     const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏
 
 I can help you find auspicious times and Muhurat timings.
@@ -208,7 +194,7 @@ Start by trying one of these commands:
     await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
 });
 
-botInstance.command('help', async (ctx) => {
+bot.command('help', async (ctx) => {
     const helpMessage = `✨ *Panchang Bot Commands* ✨
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 🔹 /start - Start the bot
@@ -233,17 +219,17 @@ Vijayawada, 2024-01-25
     await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
 });
 
-botInstance.command('gt', async (ctx) => {
+bot.command('gt', async (ctx) => {
     userStates.set(ctx.message.from.id, 'gt');
     await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
 });
 
-botInstance.command('dgt', async (ctx) => {
+bot.command('dgt', async (ctx) => {
     userStates.set(ctx.message.from.id, 'dgt');
     await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
 });
 
-botInstance.command('cancel', async (ctx) => {
+bot.command('cancel', async (ctx) => {
     const userId = ctx.message.from.id;
     if (userStates.has(userId)) {
         userStates.delete(userId);
@@ -265,7 +251,7 @@ const formatDate = (dateString) => {
 };
 
 // Modify the hears handler to only process messages when there's an active command
-botInstance.hears(/.*/, async (messageCtx) => {
+bot.hears(/.*/, async (messageCtx) => {
     const userId = messageCtx.message.from.id;
     const activeCommand = userStates.get(userId);
     const messageText = messageCtx.message.text;
@@ -307,11 +293,8 @@ botInstance.hears(/.*/, async (messageCtx) => {
 });
 
 // Handler for GT command
-async function handleGTCommand(messageCtx) {
+async function handleGTCommand(messageCtx, city, date) {
     try {
-        // Send loading message
-        const loadingMsg = await messageCtx.reply(LOADING_MESSAGES.gt);
-
         const userId = messageCtx.message.from.id;
         const activeCommand = userStates.get(userId);
 
@@ -469,9 +452,6 @@ async function handleGTCommand(messageCtx) {
             messageCtx.reply('Sorry, there was an error fetching the Panchangam data. Please try again later.');
         }
 
-        // Delete loading message after processing
-        await loadingMsg.delete().catch(() => {});
-
         userStates.delete(userId); // Clear state after processing
 
     } catch (error) {
@@ -509,90 +489,11 @@ async function handleDGTCommand(messageCtx, city, date) {
     }
 }
 
-
-// Create the webhook handler for Vercel
-module.exports = async (req, res) => {
-    try {
-        // Verify the request is POST
-        if (req.method !== 'POST') {
-            res.status(200).json({ message: 'Panchang Bot is running!' });
-            return;
-        }
-
-        // Handle the update
-        await botInstance.handleUpdate(req.body);
-        
-        // Send success response
-        res.status(200).json({ ok: true });
-    } catch (error) {
-        logger.error('Webhook error:', error);
-        res.status(500).json({ 
-            ok: false, 
-            error: 'Failed to process update' 
-        });
-    }
-};
-
-// Add webhook error handling
-botInstance.catch((err, ctx) => {
-    logger.error('Bot error:', err);
-    ctx.reply('⚠️ An error occurred. Please try again later.');
+bot.launch().then(() => {
+    logger.info('Bot is running...');
+}).catch((error) => {
+    logger.error('Error launching bot:', error.message);
+    logger.error('Stack Trace:', error.stack); // Log the error stack trace for debugging
 });
 
-// Initialize webhook mode (for local testing)
-if (process.env.NODE_ENV === 'development') {
-    botInstance.launch().then(() => {
-        logger.info('Bot is running in development mode...');
-    }).catch((error) => {
-        logger.error('Error launching bot:', error);
-    });
-} else {
-    logger.info('Bot is running in webhook mode...');
-}
-
-// Export the bot instance for testing
-module.exports.bot = botInstance;
-
-// Export all necessary functions and objects
-module.exports = {
-    init,
-    handleGtCommand: async (ctx) => {
-        userStates.set(ctx.message.from.id, 'gt');
-        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
-    },
-    handleDgtCommand: async (ctx) => {
-        userStates.set(ctx.message.from.id, 'dgt');
-        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
-    },
-    handleCancelCommand: async (ctx) => {
-        const userId = ctx.message.from.id;
-        if (userStates.has(userId)) {
-            userStates.delete(userId);
-            await ctx.reply('✅ Command cancelled. You can start a new command with /gt or /dgt');        } else {
-            await ctx.reply('No active command to cancel. Use /help to see available commands.');
-        }
-    },
-    handleTextMessage: async (ctx) => {
-        const userId = ctx.message.from.id;
-        const activeCommand = userStates.get(userId);
-        if (!activeCommand || ctx.message.text.startsWith('/')) return;
-
-        try {
-            const [city, date] = ctx.message.text.split(',').map(s => s.trim());
-            if (!city || !date) {
-                return ctx.reply('Please use format: City, YYYY-MM-DD');
-            }
-            if (activeCommand === 'gt') {
-                await handleGTCommand(ctx, city, date);
-            } else if (activeCommand === 'dgt') {
-                await handleDGTCommand(ctx, city, date);
-            }
-            userStates.delete(userId);
-        } catch (error) {
-            logger.error('Error:', error);
-            ctx.reply('⚠️ An error occurred. Please try again.');
-        }
-    },
-    userStates,
-    bot: botInstance
-};
+console.log('Bot is running...');

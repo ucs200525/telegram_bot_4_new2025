@@ -1,8 +1,12 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const logger = require('pino')(); // Added logger for better logging
+const logger = require('./logger');
+const fs = require('fs');
+const path = require('path');
 
+// Add initial log to verify logging is working
+logger.info('BOT_INIT', 'Bot logging initialized');
 
 // Replace 'YOUR_BOT_API_TOKEN' with your actual API token
 const bot = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
@@ -15,16 +19,16 @@ async function getGeoNameId(city) {
     const geoNamesUrl = `http://api.geonames.org/searchJSON?q=${city}&maxRows=1&username=ucs05`;
     try {
         const response = await axios.get(geoNamesUrl);
-        console.log("Total Results Count:", response.data.totalResultsCount);
+        logger.info('GEO_NAME_FETCH', `Total Results Count: ${response.data.totalResultsCount}`);
         if (response.data.geonames && response.data.geonames.length > 0) {
             const geoNameId = response.data.geonames[0].geonameId;
-            logger.info("GeoName ID: " + geoNameId);
+            logger.info('GEO_NAME_ID', `GeoName ID: ${geoNameId}`);
             return geoNameId;
         } else {
             throw new Error('City not found');
         }
     } catch (error) {
-        console.error("Error fetching GeoName ID:", error.message);
+        logger.error('GEO_NAME_ERROR', `Error fetching GeoName ID: ${error.message}`);
         throw error;
     }
 }
@@ -34,13 +38,18 @@ const fetchmuhurat = async (city, date) => {
     try {
         // Get the GeoName ID for the provided city
         const geoNameId = await getGeoNameId(city);
+        // Convert date from YYYY-MM-DD to DD/MM/YYYY
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
+        
+        logger.info('DATE_FORMAT', `Converting date from ${date} to ${formattedDate}`);
 
         // Format the URL to include the date and GeoName ID
-        const url = `https://www.drikpanchang.com/muhurat/panchaka-rahita-muhurat.html?geoname-id=${geoNameId}&date=${date}`;
+        const url = `https://www.drikpanchang.com/muhurat/panchaka-rahita-muhurat.html?geoname-id=${geoNameId}&date=${formattedDate}`;
 
         // Fetch the HTML content from the website
         const response = await axios.get(url);
-
+        logger.info('fetchmuhurat', `Response: ${url}`);
         // Load the HTML content using cheerio
         const $ = cheerio.load(response.data);
 
@@ -110,18 +119,18 @@ const createDrikTable = async (city, date) => {
 };
 
 const getPanchangamData = async (cityName, currentDate) => {
-    logger.info(`Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
+    logger.info('PANCHANGAM_FETCH', `Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
 
     try {
         // Fetch sun times
         const sunTimesUrl = `https://panchang-aik9.vercel.app/api/getSunTimesForCity/${cityName}/${currentDate}`;
-        logger.info(`Constructed SunTimes API URL: ${sunTimesUrl}`);
+        logger.info('SUN_TIMES_URL', `Constructed SunTimes API URL: ${sunTimesUrl}`);
         const sunTimesResponse = await axios.get(sunTimesUrl);
-        logger.info('SunTimes Response:', sunTimesResponse.data);
+        logger.info('SUN_TIMES_RESPONSE', 'SunTimes Response:', sunTimesResponse.data);
 
         // Check for response status
         if (sunTimesResponse.status !== 200) {
-            logger.error(`Error: SunTimes API returned status code ${sunTimesResponse.status}`);
+            logger.error('SUN_TIMES_ERROR', `Error: SunTimes API returned status code ${sunTimesResponse.status}`);
             throw new Error(`SunTimes API returned status code ${sunTimesResponse.status}`);
         }
 
@@ -129,12 +138,12 @@ const getPanchangamData = async (cityName, currentDate) => {
 
         // Fetch weekday
         const weekdayUrl = `https://panchang-aik9.vercel.app/api/getWeekday/${currentDate}`;
-        logger.info(`Constructed Weekday API URL: ${weekdayUrl}`);
+        logger.info('WEEKDAY_URL', `Constructed Weekday API URL: ${weekdayUrl}`);
         const weekdayResponse = await axios.get(weekdayUrl);
-        logger.info('Weekday Response:', weekdayResponse.data);
+        logger.info('WEEKDAY_RESPONSE', 'Weekday Response:', weekdayResponse.data);
 
         if (weekdayResponse.status !== 200) {
-            logger.error(`Error: Weekday API returned status code ${weekdayResponse.status}`);
+            logger.error('WEEKDAY_ERROR', `Error: Weekday API returned status code ${weekdayResponse.status}`);
             throw new Error(`Weekday API returned status code ${weekdayResponse.status}`);
         }
 
@@ -147,19 +156,19 @@ const getPanchangamData = async (cityName, currentDate) => {
             weekday: weekday,
         };
     } catch (error) {
-        logger.error('Error fetching Panchangam data:', error.message);
-        logger.error('Stack Trace:', error.stack); // Log the error stack trace for debugging
+        logger.error('PANCHANGAM_ERROR', `Error fetching Panchangam data: ${error.message}`);
+        logger.error('PANCHANGAM_STACK', `Stack Trace: ${error.stack}`);
         throw new Error('Failed to fetch Panchangam data');
     }
 };
 
 // Function to update the table based on Panchangam data
 const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, currentDate) => {
-    logger.info('Sending data to update table...');
+    console.log('Sending data to update table...');
 
     try {
         const tableUrl = `https://panchang-aik9.vercel.app/api/update-table`;
-        logger.info(`Constructed Update Table API URL: ${tableUrl}`);
+        console.log(`Constructed Update Table API URL: ${tableUrl}`);
 
         const tableResponse = await axios.post(tableUrl, {
             sunriseToday,
@@ -171,7 +180,7 @@ const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, curr
             showNonBlue: false,  // Set as required
         });
 
-        logger.info('Table data received:', tableResponse.data);
+        console.log('Table data received:', tableResponse.data);
         return tableResponse.data;
     } catch (error) {
         logger.error('Error updating table:', error.message);
@@ -195,7 +204,7 @@ Start by trying one of these commands:
 });
 
 bot.command('help', async (ctx) => {
-    const helpMessage = `✨ *Panchang Bot Commands* ✨
+    const helpMessage = `✨ *rehfiurehf Panchang Bot Commands* ✨
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 🔹 /start - Start the bot
 🔹 /gt - Get good time intervals
@@ -321,20 +330,20 @@ async function handleGTCommand(messageCtx, city, date) {
         // Format date properly
         currentDate = formatDate(currentDate);
 
-        logger.info(`Received /gt command. Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
+        console.log(`Received /gt command. Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
 
         // Constructing the API URL based on backend configuration
         const sunTimesUrl = `https://panchang-aik9.vercel.app/api/getSunTimesForCity/${cityName}/${currentDate}`;
-        logger.info(`Constructed SunTimes API URL: ${sunTimesUrl}`);
+        console.log(`Constructed SunTimes API URL: ${sunTimesUrl}`);
         const response = await axios.get(sunTimesUrl);
 
         if (response.status === 200) {
             const sun = response.data;
-            logger.info("Fetched SunTimes data:", sun);
+            console.log("Fetched SunTimes data:", sun);
 
             // Fetch the weekday
             const weekdayUrl = `https://panchang-aik9.vercel.app/api/getWeekday/${currentDate}`;
-            logger.info(`Constructed Weekday API URL: ${weekdayUrl}`);
+            console.log(`Constructed Weekday API URL: ${weekdayUrl}`);
             const weekdayResponse = await axios.get(weekdayUrl);
 
             if (weekdayResponse.status === 200) {
@@ -348,99 +357,214 @@ async function handleGTCommand(messageCtx, city, date) {
                 responseMessage += `Weekday: ${weekday}\n`;
 
                 messageCtx.reply(responseMessage);
+// Helper function to split messages
+const splitMessage = (message, maxLength = 4000) => {
+    const parts = [];
+    let currentPart = '';
 
-                const fetchTableData = async () => {
-                    try {
-                        const requestData = {
-                            currentDate: currentDate,
-                            is12HourFormat: true,
-                            showNonBlue: false,
-                            sunriseTmrw: sun.sunTimes.sunriseTmrw,
-                            sunriseToday: sun.sunTimes.sunriseToday,
-                            sunsetToday: sun.sunTimes.sunsetToday,
-                            weekday: weekday,
-                        };
+    const lines = message.split('\n');
+    
+    for (const line of lines) {
+        if (currentPart.length + line.length + 1 > maxLength) {
+            parts.push(currentPart);
+            currentPart = line;
+        } else {
+            currentPart += (currentPart ? '\n' : '') + line;
+        }
+    }
+    
+    if (currentPart) {
+        parts.push(currentPart);
+    }
+    
+    return parts;
+};
 
-                        logger.info('Request Data:', JSON.stringify(requestData, null, 2));
+// Modify the fetchTableData function
+const fetchTableData = async () => {
+    try {
+        const requestData = {
+            currentDate: currentDate,
+            is12HourFormat: true,
+            showNonBlue: false,
+            sunriseTmrw: sun.sunTimes.sunriseTmrw,
+            sunriseToday: sun.sunTimes.sunriseToday,
+            sunsetToday: sun.sunTimes.sunsetToday,
+            weekday: weekday,
+        };
 
-                        const response = await axios.post(`https://panchang-aik9.vercel.app/api/update-table`, requestData);
+        logger.info('Request Data:', JSON.stringify(requestData, null, 2));
+
+        const response = await axios.post(`https://panchang-aik9.vercel.app/api/update-table`, requestData);
+        
+        // // Log the content type and raw response
+        // console.log('Response Content-Type:', response.headers['content-type']);
+        // console.log('Raw Response:', typeof response.data, response.data);
+
+        let tableData;
+        try {
+            // If response.data is a string, try to parse it
+            tableData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+            
+            // If tableData has a specific property that contains the array, extract it
+            if (tableData.newTableData) {
+                tableData = tableData.newTableData;
+            }
+        } catch (parseError) {
+            logger.error('Error parsing response:', parseError);
+            throw new Error('Invalid response format from server');
+        }
+
+        // Validate the data structure
+        if (!Array.isArray(tableData)) {
+            logger.error('Invalid data structure:', typeof tableData, tableData);
+            throw new Error('Invalid response format: expected array');
+        }
+
+        // Process valid rows
+        const validData = tableData
+            .filter(row => row && typeof row === 'object')
+            .filter(row => row.start1 && row.end1)
+            .map(row => ({
+                start1: row.start1,
+                end1: row.end1,
+                start2: row.start2 || '',
+                end2: row.end2 || '',
+                isNextDay: row.start2?.includes('Feb') || false,
+                weekdayEffect: row.weekday	 || 'కార్యహాని'  // Add weekday effect
+            }));
+
+        if (validData.length === 0) {
+            throw new Error('No valid time intervals found in the data');
+        }
+
+        // Build the message
+        let tableMessage = "✨ Auspicious Time Intervals ✨\n";
+        tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        validData.forEach((row, index) => {
+            tableMessage += `${index + 1}. ⏰ ${row.start1} to ${row.end1}\n`;
+            if (row.isNextDay && row.start2 && row.end2) {
+                tableMessage += `   └─ 📆 Next Day: ${row.start2} to ${row.end2}\n`;
+            } else if (row.start2 && row.end2) {
+                tableMessage += `   └─ 🕐 Second interval: ${row.start2} to ${row.end2}\n`;
+            }
+            tableMessage += `   └─ 🌟 Effect: ${row.weekdayEffect}\n`;
+            tableMessage += `   ─────────────────────\n\n`;
+        });
+
+        tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        tableMessage += "💫 Choose your time wisely 💫\n";
+
+        // Split and send message in parts
+        const messageParts = splitMessage(tableMessage);
+        for (const part of messageParts) {
+            await messageCtx.reply(part);
+            // Add small delay between messages
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+    } catch (error) {
+        logger.error('Error in fetchTableData:', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data
+        });
+        await messageCtx.reply(`⚠️ Error: ${error.message}\n\nPlease try again later or contact support.`);
+    }
+};
+                // const fetchTableData = async () => {
+                //     try {
+                //         const requestData = {
+                //             currentDate: currentDate,
+                //             is12HourFormat: true,
+                //             showNonBlue: false,
+                //             sunriseTmrw: sun.sunTimes.sunriseTmrw,
+                //             sunriseToday: sun.sunTimes.sunriseToday,
+                //             sunsetToday: sun.sunTimes.sunsetToday,
+                //             weekday: weekday,
+                //         };
+
+                //         logger.info('Request Data:', JSON.stringify(requestData, null, 2));
+
+                //         const response = await axios.post(`https://panchang-aik9.vercel.app/api/update-table`, requestData);
                         
-                        // Log the content type and raw response
-                        logger.info('Response Content-Type:', response.headers['content-type']);
-                        logger.info('Raw Response:', typeof response.data, response.data);
+                //         // // Log the content type and raw response
+                //         // console.log('Response Content-Type:', response.headers['content-type']);
+                //         // console.log('Raw Response:', typeof response.data, response.data);
 
-                        let tableData;
-                        try {
-                            // If response.data is a string, try to parse it
-                            tableData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+                //         let tableData;
+                //         try {
+                //             // If response.data is a string, try to parse it
+                //             tableData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
                             
-                            // If tableData has a specific property that contains the array, extract it
-                            if (tableData.newTableData) {
-                                tableData = tableData.newTableData;
-                            }
-                        } catch (parseError) {
-                            logger.error('Error parsing response:', parseError);
-                            throw new Error('Invalid response format from server');
-                        }
+                //             // If tableData has a specific property that contains the array, extract it
+                //             if (tableData.newTableData) {
+                //                 tableData = tableData.newTableData;
+                //             }
+                //         } catch (parseError) {
+                //             logger.error('Error parsing response:', parseError);
+                //             throw new Error('Invalid response format from server');
+                //         }
 
-                        // Validate the data structure
-                        if (!Array.isArray(tableData)) {
-                            logger.error('Invalid data structure:', typeof tableData, tableData);
-                            throw new Error('Invalid response format: expected array');
-                        }
+                //         // Validate the data structure
+                //         if (!Array.isArray(tableData)) {
+                //             logger.error('Invalid data structure:', typeof tableData, tableData);
+                //             throw new Error('Invalid response format: expected array');
+                //         }
 
-                        // Process valid rows
-                        const validData = tableData
-                            .filter(row => row && typeof row === 'object')
-                            .filter(row => row.start1 && row.end1)
-                            .map(row => ({
-                                start1: row.start1,
-                                end1: row.end1,
-                                start2: row.start2 || '',
-                                end2: row.end2 || '',
-                                isNextDay: row.start2?.includes('Feb') || false,
-                                weekdayEffect: row.weekday	 || 'కార్యహాని'  // Add weekday effect
-                            }));
+                //         // Process valid rows
+                //         const validData = tableData
+                //             .filter(row => row && typeof row === 'object')
+                //             .filter(row => row.start1 && row.end1)
+                //             .map(row => ({
+                //                 start1: row.start1,
+                //                 end1: row.end1,
+                //                 start2: row.start2 || '',
+                //                 end2: row.end2 || '',
+                //                 isNextDay: row.start2?.includes('Feb') || false,
+                //                 weekdayEffect: row.weekday	 || 'కార్యహాని'  // Add weekday effect
+                //             }));
 
-                        if (validData.length === 0) {
-                            throw new Error('No valid time intervals found in the data');
-                        }
+                //         if (validData.length === 0) {
+                //             throw new Error('No valid time intervals found in the data');
+                //         }
 
-                        // Build a more readable message
-                        let tableMessage = "✨ Auspicious Time Intervals ✨\n";
-                        tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+                //         // Build a more readable message
+                //         let tableMessage = "✨ Auspicious Time Intervals ✨\n";
+                //         tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
-                        validData.forEach((row, index) => {
-                            // Main time interval
-                            tableMessage += `${index + 1}. ⏰ ${row.start1} to ${row.end1}\n`;
+                //         validData.forEach((row, index) => {
+                //             // Main time interval
+                //             tableMessage += `${index + 1}. ⏰ ${row.start1} to ${row.end1}\n`;
                             
-                            // Next day or second interval if exists
-                            if (row.isNextDay && row.start2 && row.end2) {
-                                tableMessage += `   └─ 📆 Next Day: ${row.start2} to ${row.end2}\n`;
-                            } else if (row.start2 && row.end2) {
-                                tableMessage += `   └─ 🕐 Second interval: ${row.start2} to ${row.end2}\n`;
-                            }
+                //             // Next day or second interval if exists
+                //             if (row.isNextDay && row.start2 && row.end2) {
+                //                 tableMessage += `   └─ 📆 Next Day: ${row.start2} to ${row.end2}\n`;
+                //             } else if (row.start2 && row.end2) {
+                //                 tableMessage += `   └─ 🕐 Second interval: ${row.start2} to ${row.end2}\n`;
+                //             }
                             
-                            // Weekday effect with decorative line
-                            tableMessage += `   └─ 🌟 Effect: ${row.weekdayEffect}\n`;
-                            tableMessage += `   ─────────────────────\n\n`;
-                        });
+                //             // Weekday effect with decorative line
+                //             tableMessage += `   └─ 🌟 Effect: ${row.weekdayEffect}\n`;
+                //             tableMessage += `   ─────────────────────\n\n`;
+                //         });
 
-                        // Add footer
-                        tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-                        tableMessage += "💫 Choose your time wisely 💫\n";
+                //         // Add footer
+                //         tableMessage += "━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+                //         tableMessage += "💫 Choose your time wisely 💫\n";
 
-                        await messageCtx.reply(tableMessage);
+                //         await messageCtx.reply(tableMessage);
 
-                    } catch (error) {
-                        logger.error('Error in fetchTableData:', {
-                            message: error.message,
-                            stack: error.stack,
-                            response: error.response?.data
-                        });
-                        await messageCtx.reply(`⚠️ Error: ${error.message}\n\nPlease try again later or contact support.`);
-                    }
-                };
+                //     } catch (error) {
+                //         logger.error('Error in fetchTableData:', {
+                //             message: error.message,
+                //             stack: error.stack,
+                //             response: error.response?.data
+                //         });
+                //         await messageCtx.reply(`⚠️ Error: ${error.message}\n\nPlease try again later or contact support.`);
+                //     }
+                // };
 
                 await fetchTableData();
             } else {
@@ -490,10 +614,10 @@ async function handleDGTCommand(messageCtx, city, date) {
 }
 
 bot.launch().then(() => {
-    logger.info('Bot is running...');
+    logger.info('BOT_RUNNING', 'Bot is running...');
 }).catch((error) => {
-    logger.error('Error launching bot:', error.message);
-    logger.error('Stack Trace:', error.stack); // Log the error stack trace for debugging
+    logger.error('BOT_LAUNCH_ERROR', `Error launching bot: ${error.message}`);
+    logger.error('BOT_LAUNCH_STACK', `Stack Trace: ${error.stack}`);
 });
 
-console.log('Bot is running...');
+logger.info('BOT_RUNNING', 'Bot is running...');
