@@ -5,28 +5,30 @@ const uri = "mongodb://localhost:27017";
 const client = new MongoClient(uri);
 const dbName = 'panchangBot';
 
-let db;
-
-async function connectDB() {
-    try {
-        await client.connect();
-        db = client.db(dbName);
-        logger.info('DB_CONNECT', 'Connected to MongoDB');
-        
-        // Create indexes
-        await db.collection('userPreferences').createIndex({ userId: 1 }, { unique: true });
-        
-    } catch (error) {
-        logger.error('DB_CONNECT_ERROR', `MongoDB connection error: ${error.message}`);
-        throw error;
+class Database {
+    constructor() {
+        this.client = null;
+        this.db = null;
     }
-}
 
-const dbOps = {
-    savePreferences: async (userId, preferences) => {
+    async connect() {
         try {
-            const result = await db.collection('userPreferences').updateOne(
-                { userId },
+            this.client = await client.connect();
+            this.db = this.client.db(dbName);
+            await this.db.collection('userPreferences').createIndex({ userId: 1 }, { unique: true });
+            logger.info('DB_CONNECT', 'Connected to MongoDB successfully');
+        } catch (error) {
+            logger.error('DB_CONNECT_ERROR', `MongoDB connection error: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async savePreferences(userId, preferences) {
+        if (!this.db) await this.connect();
+        
+        try {
+            const result = await this.db.collection('userPreferences').updateOne(
+                { userId: userId.toString() },
                 { 
                     $set: {
                         ...preferences,
@@ -41,21 +43,26 @@ const dbOps = {
             logger.error('DB_SAVE_ERROR', `Error saving preferences: ${error.message}`);
             throw error;
         }
-    },
+    }
 
-    getPreferences: async (userId) => {
+    async getPreferences(userId) {
+        if (!this.db) await this.connect();
+        
         try {
-            const prefs = await db.collection('userPreferences').findOne({ userId });
-            return prefs;
+            return await this.db.collection('userPreferences').findOne({ 
+                userId: userId.toString() 
+            });
         } catch (error) {
             logger.error('DB_GET_ERROR', `Error getting preferences: ${error.message}`);
             throw error;
         }
-    },
+    }
 
-    getAllSubscribed: async () => {
+    async getAllSubscribed() {
+        if (!this.db) await this.connect();
+        
         try {
-            return await db.collection('userPreferences')
+            return await this.db.collection('userPreferences')
                 .find({ isSubscribed: true })
                 .toArray();
         } catch (error) {
@@ -63,9 +70,23 @@ const dbOps = {
             throw error;
         }
     }
-};
+
+    async close() {
+        if (this.client) {
+            await this.client.close();
+            this.client = null;
+            this.db = null;
+            logger.info('DB_CLOSE', 'MongoDB connection closed');
+        }
+    }
+}
+
+// Create and export a single instance
+const database = new Database();
 
 // Connect when module is loaded
-connectDB().catch(console.error);
+database.connect().catch(error => {
+    logger.error('DB_INIT_ERROR', `Failed to initialize database: ${error.message}`);
+});
 
-module.exports = dbOps;
+module.exports = database;
