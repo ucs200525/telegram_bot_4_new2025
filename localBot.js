@@ -5,6 +5,7 @@ const logger = require('./logger');
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
+const schedule = require('node-schedule');
 
 // Add initial log to verify logging is working
 logger.info('BOT_INIT', 'Bot logging initialized');
@@ -30,8 +31,18 @@ const STATES = {
     AWAITING_SUBSCRIBE_TYPE: 'subscribe_type',
 };
 
+// Add typeNames constant here
+const typeNames = {
+    gt: 'Good Times Table',
+    dgt: 'Drik Panchang Table',
+    cgt: 'Combined Table'
+};
+
 // User preferences storage with MongoDB-like structure
 const userPreferences = new Map();
+
+// Active schedules tracking
+const activeSchedules = new Map();
 
 // Helper functions
 // Helper function for time validation (HH:mm)
@@ -51,16 +62,85 @@ const formatDate = (dateString) => {
     return date.toISOString().split('T')[0];
 };
 
-// Replace saveUserPreferences function
+// Add scheduling functions
+async function scheduleUserNotifications(userId, preferences) {
+    if (activeSchedules.has(userId)) {
+        activeSchedules.get(userId).cancel();
+    }
+
+    const [hours, minutes] = preferences.notificationTime.split(':');
+    const rule = new schedule.RecurrenceRule();
+    rule.hour = parseInt(hours);
+    rule.minute = parseInt(minutes);
+
+    const job = schedule.scheduleJob(rule, async () => {
+        try {
+            const prefs = await db.getPreferences(userId);
+            if (!prefs?.isSubscribed) return;
+
+            for (const type of prefs.subscriptionTypes) {
+                const today = new Date().toISOString().split('T')[0];
+                
+                switch(type) {
+                    case 'gt':
+                        await handleGTCommand({ 
+                            telegram: bot.telegram,
+                            chat: { id: userId }
+                        }, prefs.city, today);
+                        break;
+                    case 'dgt':
+                        await handleDGTCommand({ 
+                            telegram: bot.telegram,
+                            chat: { id: userId }
+                        }, prefs.city, today);
+                        break;
+                    case 'cgt':
+                        await handleCGTCommand({ 
+                            telegram: bot.telegram,
+                            chat: { id: userId }
+                        }, prefs.city, today);
+                        break;
+                }
+            }
+
+            logger.info('NOTIFICATION_SENT', `Sent daily updates to user ${userId}`);
+        } catch (error) {
+            logger.error('NOTIFICATION_ERROR', `Failed to send notification to user ${userId}: ${error.message}`);
+        }
+    });
+
+    activeSchedules.set(userId, job);
+    logger.info('SCHEDULE_SET', `Set notification schedule for user ${userId} at ${preferences.notificationTime}`);
+}
+
+// Replace existing saveUserPreferences function
 const saveUserPreferences = async (userId, preferences) => {
     try {
         await db.savePreferences(userId, preferences);
+        
+        if (preferences.notificationTime && preferences.isSubscribed) {
+            await scheduleUserNotifications(userId, await db.getPreferences(userId));
+        }
+        
         logger.info('PREFS_SAVED', `Preferences saved for user ${userId}`);
     } catch (error) {
         logger.error('PREFS_SAVE_ERROR', `Error saving preferences: ${error.message}`);
         throw error;
     }
 };
+
+// Add schedule initialization
+async function initializeSchedules() {
+    try {
+        const subscribers = await db.getAllSubscribed();
+        for (const user of subscribers) {
+            await scheduleUserNotifications(user.userId, user);
+        }
+        logger.info('SCHEDULES_INITIALIZED', `Initialized ${subscribers.length} notification schedules`);
+    } catch (error) {
+        logger.error('SCHEDULE_INIT_ERROR', `Failed to initialize schedules: ${error.message}`);
+    }
+}
 
 // Function to fetch GeoName ID based on city
 async function getGeoNameId(city) {
@@ -351,27 +431,37 @@ bot.command('status', async (ctx) => {
             return;
         }
 
-        const typeNames = {
-            gt: 'Good Times',
-            dgt: 'Drik Panchang',
-            cgt: 'Combined Table'
-        };
+        // Escape special characters and format the message properly
+        const city = prefs.city ? prefs.city.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&') : 'Not set';
+        const startDate = prefs.start_date || 'Not set';
+        const lastUpdated = new Date(prefs.last_updated).toLocaleString();
         
-        const statusMessage = `📊 *Your Current Settings*\n
-🌆 City: ${prefs.city || 'Not set'}
-📅 Start Date: ${prefs.start_date || 'Not set'}
-${prefs.isSubscribed ? `⏰ Daily Updates: ${prefs.notification_time || 'Not set'}
-📱 Subscribed Updates: ${prefs.subscriptionTypes?.map(t => typeNames[t]).join(', ') || 'None'}` : '📱 Subscription Status: ❌ Not subscribed'}
-🔄 Last Updated: ${new Date(prefs.last_updated).toLocaleString()}
+        let subscribedUpdates = '';
+        if (prefs.isSubscribed && prefs.subscriptionTypes) {
+            subscribedUpdates = prefs.subscriptionTypes
+                .map(t => typeNames[t])
+                .join(', ')
+                .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+        }
 
-Available Commands:
-• /subscribe - Enable daily updates
-• /stop - Disable updates
-• /change_time - Update notification time
-• /change_city - Change city
-• /change_date - Modify start date`;
+        const statusMessage = `*📊 Your Current Settings*\n
+🌆 City: ${city}
+📅 Start Date: ${startDate}${prefs.isSubscribed ? `
+⏰ Daily Updates: ${prefs.notification_time || 'Not set'}
+📱 Subscribed Updates: ${subscribedUpdates || 'None'}` : '\n📱 Subscription Status: ❌ Not subscribed'}
+🔄 Last Updated: ${lastUpdated}
+
+*Available Commands:*
+• /subscribe \\- Enable daily updates
+• /stop \\- Disable updates
+• /change\\_time \\- Update notification time
+• /change\\_city \\- Change city
+• /change\\_date \\- Modify start date`;
         
-        await ctx.reply(statusMessage, { parse_mode: 'Markdown' });
+        await ctx.reply(statusMessage, { 
+            parse_mode: 'MarkdownV2',
+            disable_web_page_preview: true
+        });
     } catch (error) {
         logger.error('STATUS_ERROR', `Error in status command: ${error.message}`);
         await ctx.reply('❌ Error retrieving your preferences. Please try again.');
@@ -601,10 +691,8 @@ Reply with the number (1-6):`;
                 const selectedTypes = typeMap[input];
                 
                 try {
-                    // Get existing preferences
                     const currentPrefs = await db.getPreferences(userId);
                     
-                    // Save updated preferences
                     await saveUserPreferences(userId, {
                         ...currentPrefs,
                         subscriptionTypes: selectedTypes,
@@ -627,6 +715,7 @@ You will receive your selected updates daily at ${prefs.notificationTime}.`;
                     logger.error('SUBSCRIPTION_ERROR', error.message);
                     await ctx.reply('❌ Error saving subscription. Please try again.');
                 }
+                userStates.delete(userId);
                 break;
         }
     } catch (error) {
@@ -718,12 +807,14 @@ async function handleDGTCommand(messageCtx, city, date) {
     try {
         // Send loading message
         loadingMessage = await messageCtx.reply('⏳ Generating Drik Panchang table...');
-        logger.info('DGT_PROCESS', `Starting DGT process for ${city} on ${date}`);
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
+        logger.info('DGT_PROCESS', `Starting DGT process for ${city} on ${formattedDate}`);
 
         // Prepare request data
         const requestData = {
             city: city,
-            date: date,
+            date: formattedDate,
             goodTimingsOnly: false
         };
 
@@ -793,10 +884,11 @@ async function handleCGTCommand(messageCtx, city, date) {
         // Send loading message
         loadingMessage = await messageCtx.reply('⏳ Generating combined time table...');
         logger.info('CGT_PROCESS', `Starting CGT process for ${city} on ${date}`);
-
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
         // First fetch muhurat data
         const muhuratResponse = await axios.get(
-            `http://localhost:4000/api/getDrikTable?city=${city}&date=${date}&goodTimingsOnly=true`
+            `http://localhost:4000/api/getDrikTable?city=${city}&date=${formattedDate}&goodTimingsOnly=true`
         );
         if (muhuratResponse.status !== 200) throw new Error('Failed to fetch muhurat data');
         const muhuratData = muhuratResponse.data;
@@ -804,7 +896,7 @@ async function handleCGTCommand(messageCtx, city, date) {
 
         // Then fetch panchangam data
         const panchangamResponse = await axios.get(
-            `http://localhost:4000/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=false&is12HourFormat=true`
+            `http://localhost:4000/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=true&is12HourFormat=true`
         );
         if (panchangamResponse.status !== 200) throw new Error('Failed to fetch panchangam data');
         const panchangamData = panchangamResponse.data;
@@ -863,11 +955,27 @@ async function handleCGTCommand(messageCtx, city, date) {
     }
 }
 
-bot.launch().then(() => {
+bot.launch().then(async () => {
     logger.info('BOT_RUNNING', 'Bot is running...');
+    await initializeSchedules();
 }).catch((error) => {
     logger.error('BOT_LAUNCH_ERROR', `Error launching bot: ${error.message}`);
     logger.error('BOT_LAUNCH_STACK', `Stack Trace: ${error.stack}`);
 });
 
-logger.info('BOT_RUNNING', 'Bot is running...');
+// Add cleanup handlers
+process.once('SIGINT', () => {
+    for (const [userId, job] of activeSchedules) {
+        job.cancel();
+    }
+    activeSchedules.clear();
+    bot.stop('SIGINT');
+});
+
+process.once('SIGTERM', () => {
+    for (const [userId, job] of activeSchedules) {
+        job.cancel();
+    }
+    activeSchedules.clear();
+    bot.stop('SIGTERM');
+});
