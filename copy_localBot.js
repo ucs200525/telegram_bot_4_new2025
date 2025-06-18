@@ -35,9 +35,13 @@ const typeNames = {
     cgt: 'Combined Table'
 };
 
+// User preferences storage with MongoDB-like structure
+const userPreferences = new Map();
+
 // Active schedules tracking
 const activeSchedules = new Map();
 
+// Helper functions
 // Helper function for time validation (HH:mm)
 const isValidTime = (time) => {
     return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time);
@@ -50,6 +54,10 @@ const isValidDate = (dateString) => {
     return date instanceof Date && !isNaN(date) && /^\d{4}-\d{2}-\d{2}$/.test(dateString);
 };
 
+// const formatDate = (dateString) => {
+//     const date = new Date(dateString);
+//     return date.toISOString().split('T')[0];
+// };
 
 // Add scheduling functions
 async function scheduleUserNotifications(userId, preferences) {
@@ -147,6 +155,180 @@ async function initializeSchedules() {
     }
 }
 
+// Function to fetch GeoName ID based on city
+async function getGeoNameId(city) {
+    const geoNamesUrl = `http://api.geonames.org/searchJSON?q=${city}&maxRows=1&username=ucs05`;
+    try {
+        const response = await axios.get(geoNamesUrl);
+        logger.info('GEO_NAME_FETCH', `Total Results Count: ${response.data.totalResultsCount}`);
+        if (response.data.geonames && response.data.geonames.length > 0) {
+            const geoNameId = response.data.geonames[0].geonameId;
+            logger.info('GEO_NAME_ID', `GeoName ID: ${geoNameId}`);
+            return geoNameId;
+        } else {
+            throw new Error('City not found');
+        }
+    } catch (error) {
+        logger.error('GEO_NAME_ERROR', `Error fetching GeoName ID: ${error.message}`);
+        throw error;
+    }
+}
+
+// Function to fetch Muhurat data for a given city and date
+const fetchmuhurat = async (city, date) => {
+    try {
+        // Get the GeoName ID for the provided city
+        const geoNameId = await getGeoNameId(city);
+        // Convert date from YYYY-MM-DD to DD/MM/YYYY
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
+        
+        logger.info('DATE_FORMAT', `Converting date from ${date} to ${formattedDate}`);
+
+        // Format the URL to include the date and GeoName ID
+        const url = `https://www.drikpanchang.com/muhurat/panchaka-rahita-muhurat.html?geoname-id=${geoNameId}&date=${formattedDate}`;
+
+        // Fetch the HTML content from the website
+        const response = await axios.get(url);
+        logger.info('fetchmuhurat', `Response: ${url}`);
+        // Load the HTML content using cheerio
+        const $ = cheerio.load(response.data);
+
+        // Extract the required data from the table
+        const muhuratData = [];
+
+        // Loop through all the rows that contain the Muhurat information
+        $('.dpMuhurtaRow').each((i, element) => {
+            const muhurtaName = $(element).find('.dpMuhurtaName').text().trim();
+            const muhurtaTime = $(element).find('.dpMuhurtaTime').text().trim();
+
+            const [name, category] = muhurtaName.split(' - '); // Split name and category
+
+            muhuratData.push({
+                muhurat: name,
+                category: category || '',
+                time: muhurtaTime,
+            });
+        });
+
+        return muhuratData; // Return the muhurat data
+    } catch (error) {
+        console.error('Error fetching Muhurat data:', error);
+        throw new Error('Error fetching data');
+    }
+};
+
+// // Function to create the Drik Table
+// const createDrikTable = async (city, date) => {
+//     const filteredData = await fetchmuhurat(city, date);
+
+//     const drikTable = filteredData.map((row) => {
+//         const [startTime, endTime] = row.time.split(' to ');
+
+//         let endTimeWithoutDate, endDatePart;
+
+//         if (endTime.includes(', ')) {
+//             [endTimeWithoutDate, endDatePart] = endTime.split(', ');
+//         } else {
+//             endTimeWithoutDate = endTime;
+//             endDatePart = null;
+//         }
+
+//         const currentDate = new Date(date);
+//         let adjustedStartTime = startTime.includes('PM')
+//             ? `${startTime}`
+//             : startTime.includes('AM') && endTime.includes(',')
+//                 ? `${endDatePart} , ${startTime}`
+//                 : startTime;
+
+//         let adjustedEndTime = endTime.includes('AM') && endTime.includes(',')
+//             ? `${endDatePart} , ${endTimeWithoutDate}`
+//             : endTime.includes('PM')
+//                 ? `${endTimeWithoutDate}`
+//                 : endTime;
+
+//         const timeIntervalFormatted = `${adjustedStartTime} to ${adjustedEndTime}`;
+
+//         return {
+//             category: row.category,
+//             muhurat: row.muhurat,
+//             time: timeIntervalFormatted,
+//         };
+//     });
+
+//     return drikTable;
+// };
+
+// const getPanchangamData = async (cityName, currentDate) => {
+//     logger.info('PANCHANGAM_FETCH', `Fetching Panchangam data for city: ${cityName} and date: ${currentDate}`);
+
+//     try {
+//         // Fetch sun times
+//         const sunTimesUrl = `https://panchang-aik9.vercel.app/api/getSunTimesForCity/${cityName}/${currentDate}`;
+//         logger.info('SUN_TIMES_URL', `Constructed SunTimes API URL: ${sunTimesUrl}`);
+//         const sunTimesResponse = await axios.get(sunTimesUrl);
+//         logger.info('SUN_TIMES_RESPONSE', 'SunTimes Response:', sunTimesResponse.data);
+
+//         // Check for response status
+//         if (sunTimesResponse.status !== 200) {
+//             logger.error('SUN_TIMES_ERROR', `Error: SunTimes API returned status code ${sunTimesResponse.status}`);
+//             throw new Error(`SunTimes API returned status code ${sunTimesResponse.status}`);
+//         }
+
+//         const sunTimes = sunTimesResponse.data.sunTimes;
+
+//         // Fetch weekday
+//         const weekdayUrl = `https://panchang-aik9.vercel.app/api/getWeekday/${currentDate}`;
+//         logger.info('WEEKDAY_URL', `Constructed Weekday API URL: ${weekdayUrl}`);
+//         const weekdayResponse = await axios.get(weekdayUrl);
+//         logger.info('WEEKDAY_RESPONSE', 'Weekday Response:', weekdayResponse.data);
+
+//         if (weekdayResponse.status !== 200) {
+//             logger.error('WEEKDAY_ERROR', `Error: Weekday API returned status code ${weekdayResponse.status}`);
+//             throw new Error(`Weekday API returned status code ${weekdayResponse.status}`);
+//         }
+
+//         const weekday = weekdayResponse.data.weekday;
+
+//         return {
+//             sunriseToday: sunTimes.sunriseToday,
+//             sunsetToday: sunTimes.sunsetToday,
+//             sunriseTmrw: sunTimes.sunriseTmrw,
+//             weekday: weekday,
+//         };
+//     } catch (error) {
+//         logger.error('PANCHANGAM_ERROR', `Error fetching Panchangam data: ${error.message}`);
+//         logger.error('PANCHANGAM_STACK', `Stack Trace: ${error.stack}`);
+//         throw new Error('Failed to fetch Panchangam data');
+//     }
+// };
+
+// // Function to update the table based on Panchangam data
+// const updateTable = async (sunriseToday, sunsetToday, sunriseTmrw, weekday, currentDate) => {
+//     console.log('Sending data to update table...');
+
+//     try {
+//         const tableUrl = `https://panchang-aik9.vercel.app/api/update-table`;
+//         console.log(`Constructed Update Table API URL: ${tableUrl}`);
+
+//         const tableResponse = await axios.post(tableUrl, {
+//             sunriseToday,
+//             sunsetToday,
+//             sunriseTmrw,
+//             weekday,
+//             is12HourFormat: true,  // Set as required
+//             currentDate,
+//             showNonBlue: false,  // Set as required
+//         });
+
+//         console.log('Table data received:', tableResponse.data);
+//         return tableResponse.data;
+//     } catch (error) {
+//         logger.error('Error updating table:', error.message);
+//         logger.error('Stack Trace:', error.stack); // Log the error stack trace for debugging
+//         throw new Error('Failed to update table');
+//     }
+// };
 
 // Command handlers - place these before hears handler
 bot.command('start', async (ctx) => {
