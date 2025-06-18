@@ -1,33 +1,4 @@
 const pino = require('pino');
-const fs = require('fs');
-const path = require('path');
-
-// Create logs directory if it doesn't exist
-const logsDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
-
-// Common transport options
-const transportOptions = {
-    translateTime: 'yyyy-mm-dd HH:MM:ss',
-    ignore: 'pid,hostname',
-    messageFormat: '{level} {action}: {message}',
-    singleLine: true
-};
-
-// Configure file transport
-const fileTransport = pino.destination({
-    dest: path.join(logsDir, 'app.log'),
-    sync: false
-});
-
-// Configure console transport
-const consoleTransport = pino.transport({
-    target: 'pino-pretty',
-    options: {
-        ...transportOptions,
-        colorize: true
-    }
-});
 
 // Create logger instance with custom formatting
 const logger = pino({
@@ -37,10 +8,8 @@ const logger = pino({
         bindings: () => ({})  // Remove pid and hostname
     },
     timestamp: () => `,"time":"${new Date().toISOString()}"`
-}, pino.multistream([
-    { stream: fileTransport },
-    { stream: consoleTransport }
-]));
+    // You may add transports here if needed
+});
 
 // Helper function to format messages
 const formatMessage = (action, msg, data = {}) => ({

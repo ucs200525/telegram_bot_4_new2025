@@ -14,6 +14,7 @@
   ],
   "env": {
     "NODE_ENV": "production",
-    "BOT_TOKEN": "7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM"
+    "BOT_TOKEN": "7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM",
+    "LOG_LEVEL": "info"
   }
 }
