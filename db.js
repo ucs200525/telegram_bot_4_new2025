@@ -12,19 +12,18 @@ class Database {
 
     async connect() {
         try {
-            // Add connection options to handle SSL and other requirements
+            // Updated options removing deprecated fields
             const options = {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
-                ssl: true,
-                tls: true,
-                tlsAllowInvalidCertificates: true,
                 retryWrites: true,
                 serverApi: {
                     version: '1',
                     strict: true,
                     deprecationErrors: true
-                }
+                },
+                maxPoolSize: 10,
+                minPoolSize: 5,
+                connectTimeoutMS: 10000,
+                socketTimeoutMS: 45000
             };
 
             this.client = await MongoClient.connect(uri, options);
@@ -98,20 +97,24 @@ class Database {
 // Create and export a single instance
 const database = new Database();
 
-// Connect when module is loaded with error handling
+// Connect with retry logic
 (async () => {
-    try {
-        await database.connect();
-    } catch (error) {
-        logger.error('DB_INIT_ERROR', `Failed to initialize database: ${error.message}`);
-        // Add retry logic
-        setTimeout(async () => {
-            try {
-                await database.connect();
-            } catch (retryError) {
-                logger.error('DB_RETRY_ERROR', `Retry failed: ${retryError.message}`);
+    const maxRetries = 5;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+        try {
+            await database.connect();
+            break;
+        } catch (error) {
+            retryCount++;
+            logger.error('DB_RETRY', `Connection attempt ${retryCount} failed: ${error.message}`);
+            if (retryCount === maxRetries) {
+                logger.error('DB_INIT_ERROR', 'Failed to initialize database after max retries');
+                throw error;
             }
-        }, 5000); // Retry after 5 seconds
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+        }
     }
 })();
 
