@@ -1,7 +1,7 @@
 const { MongoClient } = require('mongodb');
 const logger = require('./logger');
 
-const uri = "mongodb://localhost:27017";
+const uri = "mongodb+srv://upadhyayulachandrasekhar7070:XqV8rR2YbArlDZMp@cluster0.awpfdyw.mongodb.net/";
 const client = new MongoClient(uri);
 const dbName = 'panchangBot';
 
