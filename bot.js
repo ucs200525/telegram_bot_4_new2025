@@ -569,7 +569,7 @@ async function handleGTCommand(messageCtx, city, date) {
 
         const imageResponse = await axios({
             method: 'post',
-            url: 'http://localhost:4000/api/getBharagvTable-image',
+            url: `https://panchang-aik9.vercel.app/api/getBharagvTable-image`,
             data: requestData,
             responseType: 'arraybuffer',
             timeout: 30000,
@@ -659,7 +659,7 @@ async function handleDGTCommand(messageCtx, city, date) {
 
         const imageResponse = await axios({
             method: 'post',
-            url: 'http://localhost:4000/api/getDrikTable-image',
+            url: 'https://panchang-aik9.vercel.app/api/getDrikTable-image',
             data: requestData,
             responseType: 'arraybuffer',
             timeout: 30000,
@@ -740,14 +740,14 @@ async function handleCGTCommand(messageCtx, city, date) {
         const formattedDate = `${day}/${month}/${year}`;
         
         const muhuratResponse = await axios.get(
-            `http://localhost:4000/api/getDrikTable?city=${city}&date=${formattedDate}&goodTimingsOnly=true`
+            `https://panchang-aik9.vercel.app/api/getDrikTable?city=${city}&date=${formattedDate}&goodTimingsOnly=true`
         );
         if (muhuratResponse.status !== 200) throw new Error('Failed to fetch muhurat data');
         const muhuratData = muhuratResponse.data;
         logger.info('CGT_MUHURAT', 'Fetched muhurat data');
 
         const panchangamResponse = await axios.get(
-            `http://localhost:4000/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=true&is12HourFormat=true`
+            `https://panchang-aik9.vercel.app/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=true&is12HourFormat=true`
         );
         if (panchangamResponse.status !== 200) throw new Error('Failed to fetch panchangam data');
         const panchangamData = panchangamResponse.data;
@@ -755,7 +755,7 @@ async function handleCGTCommand(messageCtx, city, date) {
 
         const imageResponse = await axios({
             method: 'post',
-            url: 'http://localhost:4000/api/combine-image',
+            url: 'https://panchang-aik9.vercel.app/api/combine-image',
             data: { 
                 muhuratData, 
                 panchangamData,
