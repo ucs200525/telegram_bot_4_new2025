@@ -12,44 +12,81 @@ const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAHIWiU5yvfIzo7eJW
 // Share the bot instance with the bot logic
 botLogic.init(bot);
 
-// Register all command handlers
+// Register command handlers
 bot.command('start', async (ctx) => {
     const userId = ctx.message.from.id;
     botLogic.userStates.set(userId, botLogic.STATES.AWAITING_TIME);
-    const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏\n\nLet's set up your daily updates...`;
+    const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏
+
+Let's set up your daily updates:
+1️⃣ First, enter your preferred time (24-hour format, e.g., 08:00)
+2️⃣ Then your city
+3️⃣ Finally, the start date
+
+You can also use:
+\/gt - Get good time intervals
+\/dgt - Get Drik Panchang timings
+\/cgt - Get custom good times
+
+Use \/help to see all commands.`;
     await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
 });
 
-// Register preference commands
+// Register the preference commands
 const preferenceCommands = {
-    'change_time': botLogic.STATES.AWAITING_TIME,
-    'change_city': botLogic.STATES.AWAITING_CITY,
-    'change_date': botLogic.STATES.AWAITING_DATE
+    'change_time': {
+        state: botLogic.STATES.AWAITING_TIME,
+        prompt: 'Please enter your notification time (24-hour format, e.g., 08:00):'
+    },
+    'change_city': {
+        state: botLogic.STATES.AWAITING_CITY,
+        prompt: 'Please enter your city name:'
+    },
+    'change_date': {
+        state: botLogic.STATES.AWAITING_DATE,
+        prompt: 'Please enter start date (YYYY-MM-DD):'
+    }
 };
 
-Object.entries(preferenceCommands).forEach(([command, state]) => {
-    bot.command(command, ctx => botLogic.handlePreferenceCommand(ctx, state));
+Object.entries(preferenceCommands).forEach(([command, config]) => {
+    bot.command(command, async (ctx) => {
+        const userId = ctx.message.from.id;
+        botLogic.userStates.set(userId, config.state);
+        await ctx.reply(config.prompt);
+    });
 });
 
 // Register main feature commands
-bot.command('gt', ctx => botLogic.handleGtCommand(ctx));
-bot.command('dgt', ctx => botLogic.handleDgtCommand(ctx));
-bot.command('cgt', ctx => botLogic.handleCgtCommand(ctx));
+bot.command('gt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    botLogic.userStates.set(userId, botLogic.STATES.AWAITING_GT_INPUT);
+    await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
+});
 
-// Register subscription commands
-bot.command('subscribe', ctx => botLogic.handleSubscribeCommand(ctx));
-bot.command('stop', ctx => botLogic.handleStopCommand(ctx));
-bot.command('status', ctx => botLogic.handleStatusCommand(ctx));
+bot.command('dgt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    botLogic.userStates.set(userId, botLogic.STATES.AWAITING_DGT_INPUT);
+    await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
+});
+
+bot.command('cgt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    botLogic.userStates.set(userId, botLogic.STATES.AWAITING_CGT_INPUT);
+    await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
+});
 
 // Register utility commands
 bot.command('help', ctx => botLogic.handleHelpCommand(ctx));
-bot.command('cancel', ctx => botLogic.handleCancelCommand(ctx));
+bot.command('status', ctx => botLogic.handleStatusCommand(ctx));
+bot.command('subscribe', ctx => botLogic.handleSubscribeCommand(ctx));
+bot.command('stop', ctx => botLogic.handleStopCommand(ctx));
 bot.command('update_all', ctx => botLogic.handleUpdateAllCommand(ctx));
+bot.command('cancel', ctx => botLogic.handleCancelCommand(ctx));
 
-// Handle text messages for all states
+// Handle text messages
 bot.on('text', ctx => botLogic.handleTextMessage(ctx));
 
-// Default route for webhook
+// Webhook handler
 app.all('*', async (req, res) => {
     try {
         if (req.method === 'POST') {
@@ -74,12 +111,11 @@ app.all('*', async (req, res) => {
     }
 });
 
-// Add error handling
+// Error handling
 bot.catch((err, ctx) => {
     logger.error('BOT_ERROR', err);
     ctx.reply('⚠️ An error occurred. Please try again later.');
 });
 
-// Export the Express app and bot instance
 module.exports = app;
 module.exports.bot = bot;
