@@ -2,7 +2,6 @@ const { MongoClient } = require('mongodb');
 const logger = require('./logger');
 
 const uri = "mongodb+srv://upadhyayulachandrasekhar7070:XqV8rR2YbArlDZMp@cluster0.awpfdyw.mongodb.net/";
-const client = new MongoClient(uri);
 const dbName = 'panchangBot';
 
 class Database {
@@ -13,7 +12,22 @@ class Database {
 
     async connect() {
         try {
-            this.client = await client.connect();
+            // Add connection options to handle SSL and other requirements
+            const options = {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                ssl: true,
+                tls: true,
+                tlsAllowInvalidCertificates: true,
+                retryWrites: true,
+                serverApi: {
+                    version: '1',
+                    strict: true,
+                    deprecationErrors: true
+                }
+            };
+
+            this.client = await MongoClient.connect(uri, options);
             this.db = this.client.db(dbName);
             await this.db.collection('userPreferences').createIndex({ userId: 1 }, { unique: true });
             logger.info('DB_CONNECT', 'Connected to MongoDB successfully');
@@ -84,9 +98,21 @@ class Database {
 // Create and export a single instance
 const database = new Database();
 
-// Connect when module is loaded
-database.connect().catch(error => {
-    logger.error('DB_INIT_ERROR', `Failed to initialize database: ${error.message}`);
-});
+// Connect when module is loaded with error handling
+(async () => {
+    try {
+        await database.connect();
+    } catch (error) {
+        logger.error('DB_INIT_ERROR', `Failed to initialize database: ${error.message}`);
+        // Add retry logic
+        setTimeout(async () => {
+            try {
+                await database.connect();
+            } catch (retryError) {
+                logger.error('DB_RETRY_ERROR', `Retry failed: ${retryError.message}`);
+            }
+        }, 5000); // Retry after 5 seconds
+    }
+})();
 
 module.exports = database;
