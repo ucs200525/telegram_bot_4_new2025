@@ -697,30 +697,74 @@ Reply with the number (1-6):`);
     }
 }
 
-// Initialize bot reference and setup handlers
+// Modify command handlers to handle direct commands
+bot.command('gt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, STATES.AWAITING_GT_INPUT);
+    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+});
+
+bot.command('dgt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, STATES.AWAITING_DGT_INPUT);
+    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+});
+
+bot.command('cgt', async (ctx) => {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, STATES.AWAITING_CGT_INPUT);
+    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+});
+
+// Update init function to properly set command handlers
 function init(botInstance) {
     bot = botInstance;
     logger.info('BOT_INIT', 'Bot initialized');
     
-    // Register all command handlers
-    bot.command('start', handleStartCommand);
-    bot.command('subscribe', handleSubscribeCommand);
-    bot.command('stop', handleStopCommand);
-    bot.command('status', handleStatusCommand);
-    bot.command('help', handleHelpCommand);
-    bot.command('gt', handleGTCommand);
-    bot.command('dgt', handleDGTCommand);
-    bot.command('cgt', handleCGTCommand);
-    bot.command('cancel', handleCancelCommand);
-    bot.command('update_all', handleUpdateAllCommand);
+    // Register all command handlers with error handling
+    const commands = {
+        'start': handleStartCommand,
+        'subscribe': handleSubscribeCommand,
+        'stop': handleStopCommand,
+        'status': handleStatusCommand,
+        'help': handleHelpCommand,
+        'cancel': handleCancelCommand,
+        'update_all': handleUpdateAllCommand
+    };
+
+    // Register commands with error handling
+    Object.entries(commands).forEach(([command, handler]) => {
+        bot.command(command, async (ctx) => {
+            try {
+                await handler(ctx);
+            } catch (error) {
+                logger.error(`COMMAND_ERROR_${command.toUpperCase()}`, error.message);
+                await ctx.reply('⚠️ Error processing command. Please try again.');
+            }
+        });
+    });
 
     // Register preference commands
     Object.entries(preferenceCommands).forEach(([command, config]) => {
-        bot.command(command, (ctx) => handlePreferenceCommand(ctx, config));
+        bot.command(command, async (ctx) => {
+            try {
+                await handlePreferenceCommand(ctx, config);
+            } catch (error) {
+                logger.error(`PREFERENCE_ERROR_${command.toUpperCase()}`, error.message);
+                await ctx.reply('⚠️ Error processing preference. Please try again.');
+            }
+        });
     });
 
-    // Handle text messages
-    bot.on('text', handleTextMessage);
+    // Handle text messages with error handling
+    bot.on('text', async (ctx) => {
+        try {
+            await handleTextMessage(ctx);
+        } catch (error) {
+            logger.error('TEXT_HANDLER_ERROR', error.message);
+            await ctx.reply('⚠️ Error processing message. Please try again.');
+        }
+    });
 }
 
 // Export all required functions and objects

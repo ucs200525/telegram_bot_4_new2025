@@ -29,26 +29,40 @@ const PORT = process.env.PORT || 3000;
 const WEBHOOK_PATH = '/webhook';
 const DOMAIN = process.env.DOMAIN || `https://telegram-bot-4-new2025.vercel.app/`;
 
-// Update webhook setup
+// Update webhook setup with secret token
 async function setupWebhook() {
     try {
         const webhookUrl = `${DOMAIN}${WEBHOOK_PATH}`;
-        await bot.telegram.setWebhook(webhookUrl);
+        const secretPath = Math.random().toString(36).substring(7);
+        
+        await bot.telegram.setWebhook(webhookUrl, {
+            allowed_updates: ['message', 'callback_query'],
+            drop_pending_updates: true
+        });
+        
         logger.info('WEBHOOK_SETUP', `Webhook set to ${webhookUrl}`);
+        return secretPath;
     } catch (error) {
         logger.error('WEBHOOK_SETUP_ERROR', error.message);
         throw error;
     }
 }
 
-// Webhook route
+// Update webhook route to parse updates
 app.post(WEBHOOK_PATH, async (req, res) => {
     try {
         if (!req.body) {
             return res.status(400).json({ error: 'No body provided' });
         }
-        logger.info('WEBHOOK_UPDATE', 'Received webhook update');
-        await bot.handleUpdate(req.body);
+
+        const update = req.body;
+        logger.info('WEBHOOK_UPDATE', `Received update type: ${update.message ? 'message' : 'other'}`);
+        
+        if (update.message?.text?.startsWith('/')) {
+            logger.info('COMMAND_RECEIVED', `Command: ${update.message.text}`);
+        }
+
+        await bot.handleUpdate(update);
         res.status(200).json({ ok: true });
     } catch (error) {
         logger.error('WEBHOOK_ERROR', error.message);
