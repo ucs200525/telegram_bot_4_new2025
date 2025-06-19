@@ -10,7 +10,12 @@ const schedule = require('node-schedule');
 // Add initial log to verify logging is working
 logger.info('BOT_INIT', 'Bot logging initialized');
 
-// State constants
+// Initialize bot and state management
+let bot = null;
+const userStates = new Map();
+const activeSchedules = new Map();
+
+// Constants
 const STATES = {
     AWAITING_TIME: 'awaiting_time',
     AWAITING_CITY: 'awaiting_city',
@@ -22,11 +27,32 @@ const STATES = {
     AWAITING_SUBSCRIBE_TYPE: 'subscribe_type'
 };
 
-// Add typeNames constant
 const typeNames = {
     gt: 'Good Times Table',
     dgt: 'Drik Panchang Table',
     cgt: 'Combined Table'
+};
+
+// Preference commands configuration
+const preferenceCommands = {
+    'change_time': {
+        state: STATES.AWAITING_TIME,
+        prompt: 'Please enter your notification time (24-hour format, e.g., 08:00):',
+        validate: (input) => isValidTime(input),
+        save: (userId, input) => saveUserPreferences(userId, { notificationTime: input })
+    },
+    'change_city': {
+        state: STATES.AWAITING_CITY,
+        prompt: 'Please enter your city name:',
+        validate: (input) => input.length > 2,
+        save: (userId, input) => saveUserPreferences(userId, { city: input })
+    },
+    'change_date': {
+        state: STATES.AWAITING_DATE,
+        prompt: 'Please enter start date (YYYY-MM-DD):',
+        validate: (input) => isValidDate(input),
+        save: (userId, input) => saveUserPreferences(userId, { startDate: input })
+    }
 };
 
 // Helper functions
@@ -404,253 +430,190 @@ async function initializeSchedules() {
     }
 }
 
-// Initialize bot and state management
-let bot = null; // Will be initialized with init()
-const userStates = new Map();
-const activeSchedules = new Map();
-
-// Initialize bot reference
-function init(botInstance) {
-    bot = botInstance;
-    logger.info('BOT_INIT', 'Bot initialized');
-    setupEventHandlers(bot);
-}
-
-// Setup all event handlers
-function setupEventHandlers(bot) {
-    // Command handlers
-    bot.command('start', handleStartCommand);
-    bot.command('subscribe', handleSubscribeCommand);
-    bot.command('stop', handleStopCommand);
-    bot.command('status', handleStatusCommand);
-    bot.command('help', handleHelpCommand);
-    bot.command('gt', handleGtCommand);
-    bot.command('dgt', handleDgtCommand);
-    bot.command('cgt', handleCgtCommand);
-    bot.command('cancel', handleCancelCommand);
-    bot.command('update_all', handleUpdateAllCommand);
-
-    // Register preference commands
-    Object.entries(preferenceCommands).forEach(([command, config]) => {
-        bot.command(command, (ctx) => handlePreferenceCommand(ctx, config));
-    });
-
-    // Handle text messages
-    bot.hears(/.*/, handleTextMessage);
-}
-
-// Command handler functions
+// Command handlers
 async function handleStartCommand(ctx) {
     const userId = ctx.message.from.id;
-    userStates.set(userId, STATES.AWAITING_TIME);
-    
-    const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏\n\nLet's set up your daily updates:\n1️⃣ First, enter your preferred time (24-hour format, e.g., 08:00)\n2️⃣ Then your city\n3️⃣ Finally, the start date\n\nYou can also use:\n/gt - Get good time intervals\n/dgt - Get Drik Panchang timings\n/cgt - Get custom good times\n\nUse /help to see all commands.`;
-    
-    await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
+    userStates.delete(userId);
+    await ctx.reply(`👋 Welcome to the Muhurat Bot!
+
+This bot helps you find auspicious times for your activities based on Vedic astrology.
+
+Available commands:
+/gt - Get Good Times table
+/dgt - Get Drik Panchang table
+/cgt - Get Combined table
+/subscribe - Set up daily notifications
+/stop - Stop notifications
+/status - Check your current settings
+/help - Show this help message
+/cancel - Cancel current operation
+
+To get started, try /subscribe to set up daily notifications!`);
 }
 
-botInstance.command('subscribe', async (ctx) => {
+async function handleStopCommand(ctx) {
     const userId = ctx.message.from.id;
     userStates.delete(userId);
-    userStates.set(userId, STATES.AWAITING_TIME);
-    const message = `Please enter the time you want to receive daily updates (24-hour format).
-
-Format: HH:mm (e.g., 08:00)`;
-    await ctx.reply(message);
-
-});
-
-
-const preferenceCommands = {
-    'change_time': {
-        state: STATES.AWAITING_TIME,
-        prompt: 'Please enter your notification time (24-hour format, e.g., 08:00):',
-        validate: (input) => isValidTime(input),
-        save: (userId, input) => saveUserPreferences(userId, { notificationTime: input })
-    },
-    'change_city': {
-        state: STATES.AWAITING_CITY,
-        prompt: 'Please enter your city name:',
-        validate: (input) => input.length > 2,
-        save: (userId, input) => saveUserPreferences(userId, { city: input })
-    },
-    'change_date': {
-        state: STATES.AWAITING_DATE,
-        prompt: 'Please enter start date (YYYY-MM-DD):',
-        validate: (input) => isValidDate(input),
-        save: (userId, input) => saveUserPreferences(userId, { startDate: input })
-    }
-};
-
-// Register preference commands
-Object.entries(preferenceCommands).forEach(([command, config]) => {
-    botInstance.command(command, async (ctx) => {
-        const userId = ctx.message.from.id;
-        userStates.set(userId, config.state);
-        await ctx.reply(config.prompt);
-    });
-});
-
-
-botInstance.command('update_all', async (ctx) => {
-    const userId = ctx.message.from.id;
-    userStates.set(userId, STATES.UPDATE_ALL);
-    await ctx.reply('Let\'s update all your preferences.\nFirst, enter your preferred time (24-hour format, e.g., 08:00):');
-});
-
-
-botInstance.command('stop', async (ctx) => {
-    const userId = ctx.message.from.id;
+    
     try {
-        const prefs = await db.getPreferences(userId);
-        
-        if (!prefs?.isSubscribed) {
-            await ctx.reply('❌ You are not currently subscribed to any updates.');
-            return;
+        if (activeSchedules.has(userId)) {
+            activeSchedules.get(userId).cancel();
+            activeSchedules.delete(userId);
         }
-
-        await db.savePreferences(userId, {
-            ...prefs,
-            isSubscribed: false,
-            subscriptionTypes: null,
-            notificationTime: null
-        });
         
-        await ctx.reply('✅ Successfully unsubscribed from daily updates. Your other preferences have been kept.\n\nUse /subscribe to subscribe again.');
+        await saveUserPreferences(userId, { isSubscribed: false });
+        await ctx.reply('✅ Successfully unsubscribed from notifications.');
+        
     } catch (error) {
-        logger.error('STOP_ERROR', `Error in stop command: ${error.message}`);
-        await ctx.reply('❌ Error processing your request. Please try again.');
+        logger.error('STOP_ERROR', `Error stopping notifications: ${error.message}`);
+        await ctx.reply('⚠️ Error stopping notifications. Please try again later.');
     }
-});
+}
 
-
-// Update the status command handler
-botInstance.command('status', async (ctx) => {
+async function handleStatusCommand(ctx) {
     const userId = ctx.message.from.id;
+    userStates.delete(userId);
+    
     try {
         const prefs = await db.getPreferences(userId);
-        
         if (!prefs) {
-            await ctx.reply('No preferences set. Use /subscribe to set up your preferences.');
+            await ctx.reply('❌ No preferences found. Use /subscribe to set up notifications.');
             return;
         }
 
-        const lastUpdated = prefs.lastUpdated ? 
-            new Date(prefs.lastUpdated).toLocaleString() : 'Never';
+        const subscriptionStatus = prefs.isSubscribed ? '✅ Active' : '❌ Inactive';
+        const types = prefs.subscriptionTypes || [];
+        const typesList = types.map(type => typeNames[type]).join(', ') || 'None';
 
-        const escapeMarkdown = (text) => {
-            return text ? text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&') : 'Not set';
-        };
+        const message = `🔔 Your Notification Settings
 
-        const timezone = await getTimezoneForCity(prefs.city);
-        const statusMessage = `*Current Settings*\n\n` +
-            `🌆 City: ${escapeMarkdown(prefs.city)}\n` +
-            `🌍 Timezone: ${escapeMarkdown(timezone)}\n` +
-            `📅 Start Date: ${escapeMarkdown(prefs.startDate)}\n` +
-            `⏰ Notification Time: ${escapeMarkdown(prefs.notificationTime)} (${escapeMarkdown(timezone)})\n` +
-            `📱 Subscription Status: ${prefs.isSubscribed ? '✅ Active' : '❌ Inactive'}\n`;
+📍 City: ${prefs.city || 'Not set'}
+⏰ Time: ${prefs.notificationTime || 'Not set'}
+📅 Start Date: ${prefs.startDate || 'Not set'}
+📊 Subscription Types: ${typesList}
+📱 Status: ${subscriptionStatus}
 
-        // Add subscription types if subscribed
-        let subscriptionTypes = '';
-        if (prefs.isSubscribed && prefs.subscriptionTypes && prefs.subscriptionTypes.length > 0) {
-            const types = prefs.subscriptionTypes
-                .map(type => typeNames[type])
-                .join(', ');
-            subscriptionTypes = `\n📬 Subscribed Updates: ${escapeMarkdown(types)}`;
-        }
-
-        const lastUpdateInfo = `\n🔄 Last Updated: ${escapeMarkdown(lastUpdated)}`;
-
-        const commandsHelp = `\n\n*Available Commands:*\n` +
-            `• /subscribe \\- Enable daily updates\n` +
-            `• /stop \\- Disable updates\n` +
-            `• /change\\_time \\- Update notification time\n` +
-            `• /change\\_city \\- Change city\n` +
-            `• /change\\_date \\- Modify start date`;
-
-        await ctx.reply(
-            statusMessage + subscriptionTypes + lastUpdateInfo + commandsHelp,
-            { 
-                parse_mode: 'MarkdownV2',
-                disable_web_page_preview: true
-            }
-        );
-
-    } catch (error) {
-        logger.error('STATUS_ERROR', `Error in status command: ${error.message}`);
-        await ctx.reply('❌ Error retrieving your preferences. Please try again.');
-    }
-});
-
-
-// Updated help command
-botInstance.command('help', async (ctx) => {
-    const helpMessage = `✨ *Panchang Bot Commands* ✨
-━━━━━━━━━━━━━━━━━━━━━━━━━
-🔸 *Daily Updates*
-/start - Set up preferences
-/subscribe - Enable daily updates
-/stop - Disable updates
-
-🔸 *Manage Preferences*
+Use /update_all to change all settings
+Or use specific commands:
+/change_city - Update city
 /change_time - Update time
-/change_city - Change city
-/change_date - Modify start date
-/update_all - Update all settings
-/status - View current settings
+/change_date - Update date`;
 
-🔸 *Panchang Commands*
-/gt - Get good times
-/dgt - Get Drik times
-/cgt - Get custom times
-/cancel - Cancel current command
+        await ctx.reply(message);
+        
+    } catch (error) {
+        logger.error('STATUS_ERROR', `Error getting status: ${error.message}`);
+        await ctx.reply('⚠️ Error fetching your status. Please try again later.');
+    }
+}
 
-📝 *Format Examples:*
-• Time: 08:00
-• City: Vijayawada
-• Date: 2024-01-25
-━━━━━━━━━━━━━━━━━━━━━━━━━`;
-
-    await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
-});
-
-// Modify the existing hears handler to handle new states
-bot.hears(/.*/, async (ctx) => {
+async function handleHelpCommand(ctx) {
     const userId = ctx.message.from.id;
-    const state = userStates.get(userId);
-    const input = ctx.message.text;
+    userStates.delete(userId);
+    
+    const helpText = `🌟 Muhurat Bot Help
+
+Main Commands:
+📊 Time Tables:
+/gt - Get Good Times table
+/dgt - Get Drik Panchang table
+/cgt - Get Combined table
+
+🔔 Notifications:
+/subscribe - Set up daily notifications
+/stop - Stop notifications
+/status - Check your current settings
+
+⚙️ Preferences:
+/change_city - Update your city
+/change_time - Update notification time
+/change_date - Update start date
+/update_all - Update all preferences
+
+Other Commands:
+/help - Show this help message
+/cancel - Cancel current operation
+
+📝 To use GT, DGT, or CGT commands:
+1. Send the command (e.g., /gt)
+2. Enter city and date separated by comma:
+   Example: Mumbai, 2025-06-19
+
+Need more help? Contact @support_muhurat`;
+
+    await ctx.reply(helpText);
+}
+
+async function handleCancelCommand(ctx) {
+    const userId = ctx.message.from.id;
+    userStates.delete(userId);
+    await ctx.reply('✅ Current operation cancelled. Use /help to see available commands.');
+}
+
+async function handleSubscribeCommand(ctx) {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, STATES.AWAITING_TIME);
+    await ctx.reply('Please enter your preferred notification time (24-hour format, e.g., 08:00):');
+}
+
+async function handlePreferenceCommand(ctx, config) {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, config.state);
+    await ctx.reply(config.prompt);
+}
+
+async function handleUpdateAllCommand(ctx) {
+    const userId = ctx.message.from.id;
+    userStates.set(userId, STATES.AWAITING_TIME);
+    await ctx.reply('Let\'s update all your preferences.\nFirst, enter your notification time (24-hour format, e.g., 08:00):');
+}
+
+// Add cleanup function
+function cleanup() {
+    if (activeSchedules.size > 0) {
+        for (const [userId, job] of activeSchedules) {
+            job.cancel();
+        }
+        activeSchedules.clear();
+    }
+    logger.info('Cleanup completed');
+}
+
+// Improved text message handler
+async function handleTextMessage(ctx) {
+    const userId = ctx.message.from.id;
+    const userInput = ctx.message.text;
+    const currentState = userStates.get(userId);
 
     // Ignore commands
-    if (!state || input.startsWith('/')) return;
+    if (!currentState || userInput.startsWith('/')) return;
 
     try {
-        switch (state) {
+        switch (currentState) {
             case STATES.AWAITING_TIME:
-                if (!isValidTime(input)) {
+                if (!isValidTime(userInput)) {
                     await ctx.reply('⚠️ Invalid time format. Please use HH:mm (e.g., 08:00)');
                     return;
                 }
-                await saveUserPreferences(userId, { notificationTime: input });
+                await saveUserPreferences(userId, { notificationTime: userInput });
                 userStates.set(userId, STATES.AWAITING_CITY);
-                await ctx.reply('✅ Notification time saved! Now please enter your city:');
+                await ctx.reply('Great! Now please enter your city name:');
                 break;
 
             case STATES.AWAITING_CITY:
-                await saveUserPreferences(userId, { city: input });
+                await saveUserPreferences(userId, { city: userInput });
                 userStates.set(userId, STATES.AWAITING_DATE);
-                await ctx.reply('✅ City saved! Now enter start date (YYYY-MM-DD):');
+                await ctx.reply('Please enter start date (YYYY-MM-DD):');
                 break;
 
             case STATES.AWAITING_DATE:
-                if (!isValidDate(input)) {
+                if (!isValidDate(userInput)) {
                     await ctx.reply('⚠️ Invalid date format. Please use YYYY-MM-DD');
                     return;
                 }
-                await saveUserPreferences(userId, { startDate: input });
+                await saveUserPreferences(userId, { startDate: userInput });
                 userStates.set(userId, STATES.AWAITING_SUBSCRIBE_TYPE);
-                const typeMessage = `Please select the type of updates you want to receive.
-                
-Available options:
+                await ctx.reply(`Please select the type of updates you want to receive:
 1️⃣ GT - Good Times Table
 2️⃣ DGT - Drik Panchang Table
 3️⃣ CGT - Combined Table
@@ -658,14 +621,13 @@ Available options:
 5️⃣ GT+CGT
 6️⃣ ALL
 
-Reply with the number (1-6):`;
-                await ctx.reply(typeMessage);
+Reply with the number (1-6):`);
                 break;
 
             case STATES.AWAITING_SUBSCRIBE_TYPE:
                 const validOptions = ['1', '2', '3', '4', '5', '6'];
-                if (!validOptions.includes(input)) {
-                    await ctx.reply('⚠️ Invalid option. Please select a number between 1-6');
+                if (!validOptions.includes(userInput)) {
+                    await ctx.reply('⚠️ Invalid option. Please choose a number from 1 to 6.');
                     return;
                 }
 
@@ -678,44 +640,25 @@ Reply with the number (1-6):`;
                     '6': ['gt', 'dgt', 'cgt']
                 };
 
-                const selectedTypes = typeMap[input];
+                const selectedTypes = typeMap[userInput];
+                await saveUserPreferences(userId, { 
+                    subscriptionTypes: selectedTypes,
+                    isSubscribed: true 
+                });
                 
-                try {
-                    const currentPrefs = await db.getPreferences(userId);
-                    
-                    await saveUserPreferences(userId, {
-                        ...currentPrefs,
-                        subscriptionTypes: selectedTypes,
-                        isSubscribed: true
-                    });
-
-                    const prefs = await db.getPreferences(userId);
-                    
-                    const subscriptionMessage = `✅ Subscription successful!
-                
-📍 City: ${prefs.city}
-⏰ Daily Updates Time: ${prefs.notificationTime}
-📅 Start Date: ${prefs.startDate}
-📊 Selected Updates: ${selectedTypes.map(t => typeNames[t]).join(', ')}
-
-You will receive your selected updates daily at ${prefs.notificationTime}.`;
-                    
-                    await ctx.reply(subscriptionMessage);
-                    userStates.delete(userId);
-                } catch (error) {
-                    logger.error('SUBSCRIPTION_ERROR', error.message);
-                    await ctx.reply('❌ Error saving subscription. Please try again.');
-                    userStates.delete(userId);
-                }
+                const prefs = await db.getPreferences(userId);
+                await scheduleUserNotifications(userId, prefs);
+                userStates.delete(userId);
+                await ctx.reply('✅ All set! You will now receive daily updates for your selected types.');
                 break;
 
-            // Handle existing GT/DGT commands
             case STATES.AWAITING_GT_INPUT:
-                logger.info('GT_INPUT', `Processing GT command for input: ${input}`);
-                const [city, date] = input.split(',').map(s => s.trim());
+            case STATES.AWAITING_DGT_INPUT:
+            case STATES.AWAITING_CGT_INPUT:
+                const [city, date] = userInput.split(',').map(s => s.trim());
                 
                 if (!city || !date) {
-                    await ctx.reply('⚠️ Invalid format. Please use: City, YYYY-MM-DD');
+                    await ctx.reply('⚠️ Please provide both city and date, separated by comma (e.g., Mumbai, 2025-06-19)');
                     return;
                 }
                 
@@ -725,90 +668,83 @@ You will receive your selected updates daily at ${prefs.notificationTime}.`;
                 }
 
                 try {
-                    await handleGTCommand(ctx, city, date);
+                    switch (currentState) {
+                        case STATES.AWAITING_GT_INPUT:
+                            await handleGTCommand(ctx, city, date);
+                            break;
+                        case STATES.AWAITING_DGT_INPUT:
+                            await handleDGTCommand(ctx, city, date);
+                            break;
+                        case STATES.AWAITING_CGT_INPUT:
+                            await handleCGTCommand(ctx, city, date);
+                            break;
+                    }
                 } catch (error) {
-                    logger.error('GT_COMMAND_ERROR', `Error in GT command: ${error.message}`);
-                    await ctx.reply('⚠️ Error generating time table. Please try again.');
-                }
-                userStates.delete(userId);
-                break;
-                
-            case STATES.AWAITING_DGT_INPUT:
-                logger.info('DGT_INPUT', `Processing DGT command for input: ${input}`);
-                const [dgtCity, dgtDate] = input.split(',').map(s => s.trim());
-                
-                if (!dgtCity || !dgtDate) {
-                    await ctx.reply('⚠️ Invalid format. Please use: City, YYYY-MM-DD');
-                    return;
-                }
-                
-                if (!isValidDate(dgtDate)) {
-                    await ctx.reply('⚠️ Invalid date format. Please use YYYY-MM-DD');
-                    return;
-                }
-
-                try {
-                    await handleDGTCommand(ctx, dgtCity, dgtDate);
-                } catch (error) {
-                    logger.error('DGT_COMMAND_ERROR', `Error in DGT command: ${error.message}`);
-                    await ctx.reply('⚠️ Error generating time table. Please try again.');
+                    logger.error(`Error in ${currentState}:`, error);
+                    await ctx.reply('⚠️ Error generating table. Please try again later.');
                 }
                 userStates.delete(userId);
                 break;
 
-            case STATES.AWAITING_CGT_INPUT:
-                logger.info('CGT_INPUT', `Processing CGT command for input: ${input}`);
-                const [cgtCity, cgtDate] = input.split(',').map(s => s.trim());
-                
-                if (!cgtCity || !cgtDate) {
-                    await ctx.reply('⚠️ Invalid format. Please use: City, YYYY-MM-DD');
-                    return;
-                }
-                
-                if (!isValidDate(cgtDate)) {
-                    await ctx.reply('⚠️ Invalid date format. Please use YYYY-MM-DD');
-                    return;
-                }
-
-                try {
-                    await handleCGTCommand(ctx, cgtCity, cgtDate);
-                } catch (error) {
-                    logger.error('CGT_COMMAND_ERROR', `Error in CGT command: ${error.message}`);
-                    await ctx.reply('⚠️ Error generating combined table. Please try again.');
-                }
+            default:
+                await ctx.reply('Use /help to see available commands');
                 userStates.delete(userId);
-                break;
-
-            case STATES.UPDATE_ALL:
-                if (!isValidTime(input)) {
-                    await ctx.reply('⚠️ Invalid time format. Please use HH:mm (e.g., 08:00)');
-                    return;
-                }
-                await saveUserPreferences(userId, { notificationTime: input });
-                userStates.set(userId, STATES.AWAITING_CITY);
-                await ctx.reply('✅ Notification time saved! Now please enter your city:');
-                break;
-
-           
         }
     } catch (error) {
-        logger.error('MESSAGE_PROCESSING_ERROR', `Error processing message: ${error.message}`);
-        await ctx.reply('⚠️ An error occurred. Please try again or use /cancel');
+        logger.error('Error handling text message:', error);
+        await ctx.reply('Sorry, there was an error processing your request. Please try again.');
+        userStates.delete(userId);
     }
-});
+}
 
-// Export all necessary functions and constants
+// Initialize bot reference and setup handlers
+function init(botInstance) {
+    bot = botInstance;
+    logger.info('BOT_INIT', 'Bot initialized');
+    
+    // Register all command handlers
+    bot.command('start', handleStartCommand);
+    bot.command('subscribe', handleSubscribeCommand);
+    bot.command('stop', handleStopCommand);
+    bot.command('status', handleStatusCommand);
+    bot.command('help', handleHelpCommand);
+    bot.command('gt', handleGTCommand);
+    bot.command('dgt', handleDGTCommand);
+    bot.command('cgt', handleCGTCommand);
+    bot.command('cancel', handleCancelCommand);
+    bot.command('update_all', handleUpdateAllCommand);
+
+    // Register preference commands
+    Object.entries(preferenceCommands).forEach(([command, config]) => {
+        bot.command(command, (ctx) => handlePreferenceCommand(ctx, config));
+    });
+
+    // Handle text messages
+    bot.on('text', handleTextMessage);
+}
+
+// Export all required functions and objects
 module.exports = {
-    STATES,
-    typeNames,
-    preferenceCommands,
+    init,
+    handleStartCommand,
+    handleStopCommand,
+    handleStatusCommand,
+    handleHelpCommand,
+    handleCancelCommand,
+    handleTextMessage,
     handleGTCommand,
     handleDGTCommand,
     handleCGTCommand,
-    scheduleUserNotifications,
+    handleSubscribeCommand,
+    handleUpdateAllCommand,
+    handlePreferenceCommand,
+    userStates,
+    activeSchedules,
+    typeNames,
     saveUserPreferences,
+    cleanup,
     initializeSchedules,
-    isValidTime,
-    isValidDate,
-    getTimezoneForCity
+    STATES
 };
+
+// End of file
