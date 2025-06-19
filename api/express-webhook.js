@@ -17,27 +17,41 @@ const PORT = process.env.PORT || 3000;
 // Webhook route
 app.post('/webhook', async (req, res) => {
     try {
-        logger.info('Received webhook update');
+        if (!req.body) {
+            return res.status(400).json({ error: 'No body provided' });
+        }
+        logger.info('WEBHOOK_UPDATE', 'Received webhook update');
         await bot.handleUpdate(req.body);
         res.status(200).json({ ok: true });
     } catch (error) {
-        logger.error('Webhook error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        logger.error('WEBHOOK_ERROR', error.message);
+        res.status(500).json({ 
+            ok: false,
+            error: 'Internal server error',
+            message: error.message 
+        });
     }
 });
 
 // Health check route
 app.get('/', (req, res) => {
     res.status(200).json({ 
-        status: 'OK',
+        ok: true,
+        status: 'active',
         timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV
+        environment: process.env.NODE_ENV || 'production'
     });
 });
 
-// Handle other methods
-app.all('*', (req, res) => {
-    res.status(405).json({ error: 'Method not allowed' });
+// Update the catch-all route to be more specific
+app.use((req, res) => {
+    logger.warn('INVALID_ROUTE', `${req.method} ${req.path}`);
+    res.status(405).json({ 
+        ok: false,
+        error: 'Method not allowed',
+        allowedMethods: ['GET', 'POST'],
+        path: req.path
+    });
 });
 
 // Initialize schedules if in development mode
