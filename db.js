@@ -2,7 +2,6 @@ const { MongoClient } = require('mongodb');
 const logger = require('./logger');
 
 const uri = "mongodb+srv://upadhyayulachandrasekhar7070:XqV8rR2YbArlDZMp@cluster0.awpfdyw.mongodb.net/";
-const client = new MongoClient(uri);
 const dbName = 'panchangBot';
 
 class Database {
@@ -13,12 +12,31 @@ class Database {
 
     async connect() {
         try {
-            this.client = await client.connect();
+            this.client = await MongoClient.connect(uri, {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                ssl: true,
+                tls: true,
+                tlsAllowInvalidCertificates: true,
+                retryWrites: true,
+                serverApi: {
+                    version: '1',
+                    strict: true,
+                    deprecationErrors: true
+                }
+            });
+
             this.db = this.client.db(dbName);
+            await this.db.command({ ping: 1 });
             await this.db.collection('userPreferences').createIndex({ userId: 1 }, { unique: true });
             logger.info('DB_CONNECT', 'Connected to MongoDB successfully');
         } catch (error) {
             logger.error('DB_CONNECT_ERROR', `MongoDB connection error: ${error.message}`);
+            if (this.client) {
+                await this.client.close();
+                this.client = null;
+                this.db = null;
+            }
             throw error;
         }
     }
@@ -84,8 +102,25 @@ class Database {
 // Create and export a single instance
 const database = new Database();
 
-// Connect when module is loaded
-database.connect().catch(error => {
+// Connect with retry mechanism
+const initDatabase = async (retries = 3, delay = 5000) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await database.connect();
+            return;
+        } catch (error) {
+            if (i === retries - 1) {
+                logger.error('DB_INIT_ERROR', `Failed to initialize database after ${retries} attempts`);
+                throw error;
+            }
+            logger.warn('DB_RETRY', `Retrying database connection in ${delay/1000} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+};
+
+// Initialize database with retry
+initDatabase().catch(error => {
     logger.error('DB_INIT_ERROR', `Failed to initialize database: ${error.message}`);
 });
 
