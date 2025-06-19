@@ -11,7 +11,7 @@ const schedule = require('node-schedule');
 logger.info('BOT_INIT', 'Bot logging initialized');
 
 // Replace 'YOUR_BOT_API_TOKEN' with your actual API token
-const bot = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
+const bot = new Telegraf('7274941037:AAGwGImPJAaDzr10L-HV6a5aaagOL2lLrnc');
 
 // Add state management
 const userStates = new Map();

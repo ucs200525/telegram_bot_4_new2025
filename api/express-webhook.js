@@ -20,7 +20,7 @@ app.get('/favicon.png', (req, res) => {
 });
 
 // Initialize bot with token
-const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
+const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAGwGImPJAaDzr10L-HV6a5aaagOL2lLrnc');
 
 // Initialize the bot with all handlers
 botLogic.init(bot);
