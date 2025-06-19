@@ -2,9 +2,22 @@ const { Telegraf } = require('telegraf');
 const express = require('express');
 const logger = require('../logger');
 const botLogic = require('../bot');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
+
+// Add static file middleware
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Favicon handler
+app.get('/favicon.ico', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/favicon.ico'));
+});
+
+app.get('/favicon.png', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/favicon.png'));
+});
 
 // Initialize bot with token
 const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
