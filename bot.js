@@ -7,25 +7,10 @@ const path = require('path');
 const db = require('./db');
 const schedule = require('node-schedule');
 
+// Add initial log to verify logging is working
+logger.info('BOT_INIT', 'Bot logging initialized');
 
-
-// Initialize bot and state management
-let bot = null; // Will be initialized with init()
-const userStates = new Map();
-const userPreferences = new Map(); // User preferences storage
-const LOADING_MESSAGES = {
-    gt: '⏳ Calculating auspicious times...',
-    dgt: '⏳ Fetching Drik Panchang data...'
-};
-const activeSchedules = new Map();
-
-// Add typeNames constant here
-const typeNames = {
-    gt: 'Good Times Table',
-    dgt: 'Drik Panchang Table',
-    cgt: 'Combined Table'
-};
-// Update state constants - remove redundant AWAITING_SUBSCRIBE_TIME
+// State constants
 const STATES = {
     AWAITING_TIME: 'awaiting_time',
     AWAITING_CITY: 'awaiting_city',
@@ -34,34 +19,319 @@ const STATES = {
     AWAITING_DGT_INPUT: 'dgt',
     AWAITING_CGT_INPUT: 'cgt',
     UPDATE_ALL: 'update_all',
-    AWAITING_SUBSCRIBE_TYPE: 'subscribe_type'  // Add this state
+    AWAITING_SUBSCRIBE_TYPE: 'subscribe_type'
 };
 
+// Add typeNames constant
+const typeNames = {
+    gt: 'Good Times Table',
+    dgt: 'Drik Panchang Table',
+    cgt: 'Combined Table'
+};
 
-// Initialize bot reference
-function init(botInstance) {
-    bot = botInstance;
-logger.info('BOT_INIT', 'Bot logging initialized');
-}
+// Helper functions
+const isValidTime = (time) => {
+    return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time);
+};
 
-// Replace 'YOUR_BOT_API_TOKEN' with your actual API token
-const botInstance = new Telegraf('7274941037:AAHIWiU5yvfIzo7eJWPu9S5CeJIid6ATEyM');
-init(botInstance);
-
-
-// Add this helper function at the top level
 const isValidDate = (dateString) => {
     const date = new Date(dateString);
-    return date instanceof Date && !isNaN(date);
+    return date instanceof Date && !isNaN(date) && /^\d{4}-\d{2}-\d{2}$/.test(dateString);
 };
 
-// Helper function to validate time format (HH:mm)
-const isValidTime = (time) => {
-    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    return timeRegex.test(time);
+const getTimezoneForCity = async (city) => {
+    try {
+        const geoNamesUrl = `http://api.geonames.org/searchJSON?q=${city}&maxRows=1&username=ucs05`;
+        const response = await axios.get(geoNamesUrl);
+        
+        if (!response.data.geonames?.[0]) {
+            throw new Error('City not found');
+        }
+
+        const { lat, lng } = response.data.geonames[0];
+        const timezoneUrl = `http://api.geonames.org/timezoneJSON?lat=${lat}&lng=${lng}&username=ucs05`;
+        const tzResponse = await axios.get(timezoneUrl);
+        
+        return tzResponse.data.timezoneId;
+    } catch (error) {
+        logger.error('TIMEZONE_ERROR', `Error getting timezone for ${city}: ${error.message}`);
+        throw error;
+    }
 };
 
-// Add scheduling functions
+// Handler functions
+async function handleGTCommand(messageCtx, city, date) {
+    let loadingMessage = null;
+    try {
+        const sendMessage = async (text, options = {}) => {
+            if (messageCtx.reply) {
+                return await messageCtx.reply(text, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
+            }
+        };
+
+        const sendPhoto = async (photo, options = {}) => {
+            if (messageCtx.replyWithPhoto) {
+                return await messageCtx.replyWithPhoto(photo, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
+            }
+        };
+
+        const deleteMessage = async (messageId) => {
+            if (messageCtx.telegram) {
+                try {
+                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
+                } catch (e) {
+                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
+                }
+            }
+        };
+
+        loadingMessage = await sendMessage('⏳ Generating time table...');
+        logger.info('GT_PROCESS', `Starting GT process for ${city} on ${date}`);
+
+        const requestData = {
+            city: city,
+            date: date,
+            showNonBlue: false,
+            is12HourFormat: true
+        };
+
+        const imageResponse = await axios({
+            method: 'post',
+            url: `https://panchang-aik9.vercel.app/api/getBharagvTable-image`,
+            data: requestData,
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'image/*'
+            },
+            httpsAgent: new (require('https').Agent)({  
+                rejectUnauthorized: false
+            })
+        });
+
+        logger.info('GT_IMAGE', `Image received for ${city}`);
+
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+
+        await sendPhoto(
+            { source: Buffer.from(imageResponse.data) },
+            { 
+                caption: `🗓️ Good Times Table\n📍 ${city}\n📅 ${date}\n\n💫 Choose your time wisely!`,
+                parse_mode: 'Markdown'
+            }
+        );
+
+    } catch (error) {
+        logger.error('GT_ERROR', `Error in GT command: ${error.message}`);
+        
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+        
+        const errorMessage = error.code === 'EPROTO' || error.code === 'ETIMEDOUT'
+            ? '⚠️ Connection error. Please try again.'
+            : error.response?.status === 400
+            ? '⚠️ Invalid city or date format.'
+            : error.code === 'ECONNABORTED'
+            ? '⚠️ Request timed out. Please try again.'
+            : '⚠️ Error generating time table. Please try again later.';
+
+        await sendMessage(errorMessage);
+        throw error;
+    }
+}
+
+async function handleDGTCommand(messageCtx, city, date) {
+    let loadingMessage = null;
+    try {
+        const sendMessage = async (text, options = {}) => {
+            if (messageCtx.reply) {
+                return await messageCtx.reply(text, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
+            }
+        };
+
+        const sendPhoto = async (photo, options = {}) => {
+            if (messageCtx.replyWithPhoto) {
+                return await messageCtx.replyWithPhoto(photo, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
+            }
+        };
+
+        const deleteMessage = async (messageId) => {
+            if (messageCtx.telegram) {
+                try {
+                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
+                } catch (e) {
+                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
+                }
+            }
+        };
+
+        loadingMessage = await sendMessage('⏳ Generating Drik Panchang table...');
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
+        logger.info('DGT_PROCESS', `Starting DGT process for ${city} on ${formattedDate}`);
+
+        const requestData = {
+            city: city,
+            date: formattedDate,
+            goodTimingsOnly: false
+        };
+
+        const imageResponse = await axios({
+            method: 'post',
+            url: 'https://panchang-aik9.vercel.app/api/getDrikTable-image',
+            data: requestData,
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'image/*'
+            }
+        });
+
+        logger.info('DGT_IMAGE', `Image received for ${city}`);
+
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+
+        await sendPhoto(
+            { source: Buffer.from(imageResponse.data) },
+            { 
+                caption: `✨ Drik Panchang Timings\n📍 ${city}\n📅 ${date}\n\n💫 Plan your activities accordingly!`,
+                parse_mode: 'Markdown'
+            }
+        );
+
+    } catch (error) {
+        logger.error('DGT_ERROR', `Error in DGT command: ${error.message}`);
+        
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+        
+        const errorMessage = error.code === 'ECONNREFUSED'
+            ? '⚠️ Server connection failed. Please try again later.'
+            : error.response?.status === 400
+            ? '⚠️ Invalid city or date format.'
+            : error.code === 'ECONNABORTED'
+            ? '⚠️ Request timed out. Please try again.'
+            : '⚠️ Error generating Drik Panchang table. Please try again later.';
+
+        await sendMessage(errorMessage);
+        throw error;
+    }
+}
+
+async function handleCGTCommand(messageCtx, city, date) {
+    let loadingMessage = null;
+    try {
+        const sendMessage = async (text, options = {}) => {
+            if (messageCtx.reply) {
+                return await messageCtx.reply(text, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
+            }
+        };
+
+        const sendPhoto = async (photo, options = {}) => {
+            if (messageCtx.replyWithPhoto) {
+                return await messageCtx.replyWithPhoto(photo, options);
+            } else if (messageCtx.telegram) {
+                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
+            }
+        };
+
+        const deleteMessage = async (messageId) => {
+            if (messageCtx.telegram) {
+                try {
+                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
+                } catch (e) {
+                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
+                }
+            }
+        };
+
+        loadingMessage = await sendMessage('⏳ Generating combined time table...');
+        logger.info('CGT_PROCESS', `Starting CGT process for ${city} on ${date}`);
+        
+        const [year, month, day] = date.split('-');
+        const formattedDate = `${day}/${month}/${year}`;
+        
+        const muhuratResponse = await axios.get(
+            `https://panchang-aik9.vercel.app/api/getDrikTable?city=${city}&date=${formattedDate}&goodTimingsOnly=true`
+        );
+        if (muhuratResponse.status !== 200) throw new Error('Failed to fetch muhurat data');
+        const muhuratData = muhuratResponse.data;
+        logger.info('CGT_MUHURAT', 'Fetched muhurat data');
+
+        const panchangamResponse = await axios.get(
+            `https://panchang-aik9.vercel.app/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=true&is12HourFormat=true`
+        );
+        if (panchangamResponse.status !== 200) throw new Error('Failed to fetch panchangam data');
+        const panchangamData = panchangamResponse.data;
+        logger.info('CGT_PANCHANGAM', 'Fetched panchangam data');
+
+        const imageResponse = await axios({
+            method: 'post',
+            url: 'https://panchang-aik9.vercel.app/api/combine-image',
+            data: { 
+                muhuratData, 
+                panchangamData,
+                city, 
+                date 
+            },
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'image/*'
+            }
+        });
+
+        logger.info('CGT_IMAGE', `Combined image received for ${city}`);
+
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+
+        await sendPhoto(
+            { source: Buffer.from(imageResponse.data) },
+            { 
+                caption: `🎯 Combined Times Table\n📍 ${city}\n📅 ${date}\n\n💫 Plan your activities wisely!`,
+                parse_mode: 'Markdown'
+            }
+        );
+
+    } catch (error) {
+        logger.error('CGT_ERROR', `Error in CGT command: ${error.message}`);
+        
+        if (loadingMessage) {
+            await deleteMessage(loadingMessage.message_id);
+        }
+        
+        const errorMessage = error.response?.status === 400
+            ? '⚠️ Invalid data format. Please check city and date.'
+            : error.code === 'ECONNREFUSED'
+            ? '⚠️ Server connection failed. Please try again later.'
+            : '⚠️ Error generating combined table. Please try again later.';
+
+        await sendMessage(errorMessage);
+        throw error;
+    }
+}
+
 async function scheduleUserNotifications(userId, preferences) {
     if (activeSchedules.has(userId)) {
         activeSchedules.get(userId).cancel();
@@ -78,44 +348,23 @@ async function scheduleUserNotifications(userId, preferences) {
 
         const job = schedule.scheduleJob(rule, async () => {
             try {
-                const prefs = await db.getPreferences(userId);
-                if (!prefs?.isSubscribed) return;
-
-                const userDate = new Date().toLocaleDateString('en-US', {
-                    timeZone: timezone,
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                });
-                const [month, day, year] = userDate.split('/');
-                const today = `${year}-${month}-${day}`;
-
-                for (const type of prefs.subscriptionTypes) {
-                    switch(type) {
+                // Handle notifications based on subscription types
+                const types = preferences.subscriptionTypes || [];
+                for (const type of types) {
+                    switch (type) {
                         case 'gt':
-                            await handleGTCommand({ 
-                                telegram: bot.telegram,
-                                chat: { id: userId }
-                            }, prefs.city, today);
+                            await handleGTCommand(ctx, preferences.city, preferences.startDate);
                             break;
                         case 'dgt':
-                            await handleDGTCommand({ 
-                                telegram: bot.telegram,
-                                chat: { id: userId }
-                            }, prefs.city, today);
+                            await handleDGTCommand(ctx, preferences.city, preferences.startDate);
                             break;
                         case 'cgt':
-                            await handleCGTCommand({ 
-                                telegram: bot.telegram,
-                                chat: { id: userId }
-                            }, prefs.city, today);
+                            await handleCGTCommand(ctx, preferences.city, preferences.startDate);
                             break;
                     }
                 }
-
-                logger.info('NOTIFICATION_SENT', `Sent daily updates to user ${userId} in timezone ${timezone}`);
             } catch (error) {
-                logger.error('NOTIFICATION_ERROR', `Failed to send notification to user ${userId}: ${error.message}`);
+                logger.error('NOTIFICATION_ERROR', `Error sending notification to user ${userId}: ${error.message}`);
             }
         });
 
@@ -128,8 +377,7 @@ async function scheduleUserNotifications(userId, preferences) {
     }
 }
 
-// Replace existing saveUserPreferences function
-const saveUserPreferences = async (userId, preferences) => {
+async function saveUserPreferences(userId, preferences) {
     try {
         await db.savePreferences(userId, preferences);
         
@@ -142,9 +390,8 @@ const saveUserPreferences = async (userId, preferences) => {
         logger.error('PREFS_SAVE_ERROR', `Error saving preferences: ${error.message}`);
         throw error;
     }
-};
+}
 
-// Add schedule initialization
 async function initializeSchedules() {
     try {
         const subscribers = await db.getAllSubscribed();
@@ -157,27 +404,50 @@ async function initializeSchedules() {
     }
 }
 
+// Initialize bot and state management
+let bot = null; // Will be initialized with init()
+const userStates = new Map();
+const activeSchedules = new Map();
 
-// Command handlers - place these before hears handler
-botInstance.command('start', async (ctx) => {
+// Initialize bot reference
+function init(botInstance) {
+    bot = botInstance;
+    logger.info('BOT_INIT', 'Bot initialized');
+    setupEventHandlers(bot);
+}
+
+// Setup all event handlers
+function setupEventHandlers(bot) {
+    // Command handlers
+    bot.command('start', handleStartCommand);
+    bot.command('subscribe', handleSubscribeCommand);
+    bot.command('stop', handleStopCommand);
+    bot.command('status', handleStatusCommand);
+    bot.command('help', handleHelpCommand);
+    bot.command('gt', handleGtCommand);
+    bot.command('dgt', handleDgtCommand);
+    bot.command('cgt', handleCgtCommand);
+    bot.command('cancel', handleCancelCommand);
+    bot.command('update_all', handleUpdateAllCommand);
+
+    // Register preference commands
+    Object.entries(preferenceCommands).forEach(([command, config]) => {
+        bot.command(command, (ctx) => handlePreferenceCommand(ctx, config));
+    });
+
+    // Handle text messages
+    bot.hears(/.*/, handleTextMessage);
+}
+
+// Command handler functions
+async function handleStartCommand(ctx) {
     const userId = ctx.message.from.id;
     userStates.set(userId, STATES.AWAITING_TIME);
-    const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏
-
-Let's set up your daily updates:
-1️⃣ First, enter your preferred time (24-hour format, e.g., 08:00)
-2️⃣ Then your city
-3️⃣ Finally, the start date
-
-You can also use:
-/gt - Get good time intervals
-/dgt - Get Drik Panchang timings
-/cgt - Get custom good times
-
-Use /help to see all commands.`;
+    
+    const welcomeMessage = `🙏 *Welcome to Panchang Bot!* 🙏\n\nLet's set up your daily updates:\n1️⃣ First, enter your preferred time (24-hour format, e.g., 08:00)\n2️⃣ Then your city\n3️⃣ Finally, the start date\n\nYou can also use:\n/gt - Get good time intervals\n/dgt - Get Drik Panchang timings\n/cgt - Get custom good times\n\nUse /help to see all commands.`;
     
     await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
-});
+}
 
 botInstance.command('subscribe', async (ctx) => {
     const userId = ctx.message.from.id;
@@ -527,367 +797,18 @@ You will receive your selected updates daily at ${prefs.notificationTime}.`;
     }
 });
 
-// Update the handleGTCommand function
-async function handleGTCommand(messageCtx, city, date) {
-    let loadingMessage = null;
-    try {
-        const sendMessage = async (text, options = {}) => {
-            if (messageCtx.reply) {
-                return await messageCtx.reply(text, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
-            }
-        };
-
-        const sendPhoto = async (photo, options = {}) => {
-            if (messageCtx.replyWithPhoto) {
-                return await messageCtx.replyWithPhoto(photo, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
-            }
-        };
-
-        const deleteMessage = async (messageId) => {
-            if (messageCtx.telegram) {
-                try {
-                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
-                } catch (e) {
-                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
-                }
-            }
-        };
-
-        loadingMessage = await sendMessage('⏳ Generating time table...');
-        logger.info('GT_PROCESS', `Starting GT process for ${city} on ${date}`);
-
-        const requestData = {
-            city: city,
-            date: date,
-            showNonBlue: false,
-            is12HourFormat: true
-        };
-
-        const imageResponse = await axios({
-            method: 'post',
-            url: `https://panchang-aik9.vercel.app/api/getBharagvTable-image`,
-            data: requestData,
-            responseType: 'arraybuffer',
-            timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'image/*'
-            },
-            httpsAgent: new (require('https').Agent)({  
-                rejectUnauthorized: false
-            })
-        });
-
-        logger.info('GT_IMAGE', `Image received for ${city}`);
-
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-
-        await sendPhoto(
-            { source: Buffer.from(imageResponse.data) },
-            { 
-                caption: `🗓️ Good Times Table\n📍 ${city}\n📅 ${date}\n\n💫 Choose your time wisely!`,
-                parse_mode: 'Markdown'
-            }
-        );
-
-    } catch (error) {
-        logger.error('GT_ERROR', `Error in GT command: ${error.message}`);
-        
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-        
-        const errorMessage = error.code === 'EPROTO' || error.code === 'ETIMEDOUT'
-            ? '⚠️ Connection error. Please try again.'
-            : error.response?.status === 400
-            ? '⚠️ Invalid city or date format.'
-            : error.code === 'ECONNABORTED'
-            ? '⚠️ Request timed out. Please try again.'
-            : '⚠️ Error generating time table. Please try again later.';
-
-        await sendMessage(errorMessage);
-        throw error;
-    }
-}
-
-// Update the handleDGTCommand function
-async function handleDGTCommand(messageCtx, city, date) {
-    let loadingMessage = null;
-    try {
-        const sendMessage = async (text, options = {}) => {
-            if (messageCtx.reply) {
-                return await messageCtx.reply(text, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
-            }
-        };
-
-        const sendPhoto = async (photo, options = {}) => {
-            if (messageCtx.replyWithPhoto) {
-                return await messageCtx.replyWithPhoto(photo, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
-            }
-        };
-
-        const deleteMessage = async (messageId) => {
-            if (messageCtx.telegram) {
-                try {
-                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
-                } catch (e) {
-                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
-                }
-            }
-        };
-
-        loadingMessage = await sendMessage('⏳ Generating Drik Panchang table...');
-        const [year, month, day] = date.split('-');
-        const formattedDate = `${day}/${month}/${year}`;
-        logger.info('DGT_PROCESS', `Starting DGT process for ${city} on ${formattedDate}`);
-
-        const requestData = {
-            city: city,
-            date: formattedDate,
-            goodTimingsOnly: false
-        };
-
-        const imageResponse = await axios({
-            method: 'post',
-            url: 'https://panchang-aik9.vercel.app/api/getDrikTable-image',
-            data: requestData,
-            responseType: 'arraybuffer',
-            timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'image/*'
-            }
-        });
-
-        logger.info('DGT_IMAGE', `Image received for ${city}`);
-
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-
-        await sendPhoto(
-            { source: Buffer.from(imageResponse.data) },
-            { 
-                caption: `✨ Drik Panchang Timings\n📍 ${city}\n📅 ${date}\n\n💫 Plan your activities accordingly!`,
-                parse_mode: 'Markdown'
-            }
-        );
-
-    } catch (error) {
-        logger.error('DGT_ERROR', `Error in DGT command: ${error.message}`);
-        
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-        
-        const errorMessage = error.code === 'ECONNREFUSED'
-            ? '⚠️ Server connection failed. Please try again later.'
-            : error.response?.status === 400
-            ? '⚠️ Invalid city or date format.'
-            : error.code === 'ECONNABORTED'
-            ? '⚠️ Request timed out. Please try again.'
-            : '⚠️ Error generating Drik Panchang table. Please try again later.';
-
-        await sendMessage(errorMessage);
-        throw error;
-    }
-}
-
-// Update the handleCGTCommand function
-async function handleCGTCommand(messageCtx, city, date) {
-    let loadingMessage = null;
-    try {
-        const sendMessage = async (text, options = {}) => {
-            if (messageCtx.reply) {
-                return await messageCtx.reply(text, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendMessage(messageCtx.chat.id, text, options);
-            }
-        };
-
-        const sendPhoto = async (photo, options = {}) => {
-            if (messageCtx.replyWithPhoto) {
-                return await messageCtx.replyWithPhoto(photo, options);
-            } else if (messageCtx.telegram) {
-                return await messageCtx.telegram.sendPhoto(messageCtx.chat.id, photo, options);
-            }
-        };
-
-        const deleteMessage = async (messageId) => {
-            if (messageCtx.telegram) {
-                try {
-                    await messageCtx.telegram.deleteMessage(messageCtx.chat.id, messageId);
-                } catch (e) {
-                    logger.warn('DELETE_MSG_ERROR', 'Could not delete message');
-                }
-            }
-        };
-
-        loadingMessage = await sendMessage('⏳ Generating combined time table...');
-        logger.info('CGT_PROCESS', `Starting CGT process for ${city} on ${date}`);
-        
-        const [year, month, day] = date.split('-');
-        const formattedDate = `${day}/${month}/${year}`;
-        
-        const muhuratResponse = await axios.get(
-            `https://panchang-aik9.vercel.app/api/getDrikTable?city=${city}&date=${formattedDate}&goodTimingsOnly=true`
-        );
-        if (muhuratResponse.status !== 200) throw new Error('Failed to fetch muhurat data');
-        const muhuratData = muhuratResponse.data;
-        logger.info('CGT_MUHURAT', 'Fetched muhurat data');
-
-        const panchangamResponse = await axios.get(
-            `https://panchang-aik9.vercel.app/api/getBharagvTable?city=${city}&date=${date}&showNonBlue=true&is12HourFormat=true`
-        );
-        if (panchangamResponse.status !== 200) throw new Error('Failed to fetch panchangam data');
-        const panchangamData = panchangamResponse.data;
-        logger.info('CGT_PANCHANGAM', 'Fetched panchangam data');
-
-        const imageResponse = await axios({
-            method: 'post',
-            url: 'https://panchang-aik9.vercel.app/api/combine-image',
-            data: { 
-                muhuratData, 
-                panchangamData,
-                city, 
-                date 
-            },
-            responseType: 'arraybuffer',
-            timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'image/*'
-            }
-        });
-
-        logger.info('CGT_IMAGE', `Combined image received for ${city}`);
-
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-
-        await sendPhoto(
-            { source: Buffer.from(imageResponse.data) },
-            { 
-                caption: `🎯 Combined Times Table\n📍 ${city}\n📅 ${date}\n\n💫 Plan your activities wisely!`,
-                parse_mode: 'Markdown'
-            }
-        );
-
-    } catch (error) {
-        logger.error('CGT_ERROR', `Error in CGT command: ${error.message}`);
-        
-        if (loadingMessage) {
-            await deleteMessage(loadingMessage.message_id);
-        }
-        
-        const errorMessage = error.response?.status === 400
-            ? '⚠️ Invalid data format. Please check city and date.'
-            : error.code === 'ECONNREFUSED'
-            ? '⚠️ Server connection failed. Please try again later.'
-            : '⚠️ Error generating combined table. Please try again later.';
-
-        await sendMessage(errorMessage);
-        throw error;
-    }
-}
-
-
-// Create the webhook handler for Vercel
-module.exports = async (req, res) => {
-    try {
-        // Verify the request is POST
-        if (req.method !== 'POST') {
-            res.status(200).json({ message: 'Panchang Bot is running!' });
-            return;
-        }
-
-        // Handle the update
-        await botInstance.handleUpdate(req.body);
-        
-        // Send success response
-        res.status(200).json({ ok: true });
-    } catch (error) {
-        logger.error('Webhook error:', error);
-        res.status(500).json({ 
-            ok: false, 
-            error: 'Failed to process update' 
-        });
-    }
-};
-
-// Add webhook error handling
-botInstance.catch((err, ctx) => {
-    logger.error('Bot error:', err);
-    ctx.reply('⚠️ An error occurred. Please try again later.');
-});
-
-// Initialize webhook mode (for local testing)
-if (process.env.NODE_ENV === 'development') {
-    (async () => {
-        await botInstance.launch();
-        await initializeSchedules();
-        logger.info('Bot is running in development mode...');
-    })().catch((error) => {
-        logger.error('Error launching bot:', error);
-    });
-} else {
-    logger.info('Bot is running in webhook mode...');
-}
-
-// Export the bot instance for testing
-module.exports.bot = botInstance;
-
-// Export all necessary functions and objects
+// Export all necessary functions and constants
 module.exports = {
-    init,
-    handleGtCommand: async (ctx) => {
-        userStates.set(ctx.message.from.id, 'gt');
-        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
-    },
-    handleDgtCommand: async (ctx) => {
-        userStates.set(ctx.message.from.id, 'dgt');
-        await ctx.reply('Please enter the city and date in the format: City, YYYY-MM-DD');
-    },
-    handleCancelCommand: async (ctx) => {
-        const userId = ctx.message.from.id;
-        if (userStates.has(userId)) {
-            userStates.delete(userId);
-            await ctx.reply('✅ Command cancelled. You can start a new command with /gt or /dgt');        } else {
-            await ctx.reply('No active command to cancel. Use /help to see available commands.');
-        }
-    },
-    handleTextMessage: async (ctx) => {
-        const userId = ctx.message.from.id;
-        const activeCommand = userStates.get(userId);
-        if (!activeCommand || ctx.message.text.startsWith('/')) return;
-
-        try {
-            const [city, date] = ctx.message.text.split(',').map(s => s.trim());
-            if (!city || !date) {
-                return ctx.reply('Please use format: City, YYYY-MM-DD');
-            }
-            if (activeCommand === 'gt') {
-                await handleGTCommand(ctx, city, date);
-            } else if (activeCommand === 'dgt') {
-                await handleDGTCommand(ctx, city, date);
-            }
-            userStates.delete(userId);
-        } catch (error) {
-            logger.error('Error:', error);
-            ctx.reply('⚠️ An error occurred. Please try again.');
-        }
-    },
-    userStates,
-    bot: botInstance
+    STATES,
+    typeNames,
+    preferenceCommands,
+    handleGTCommand,
+    handleDGTCommand,
+    handleCGTCommand,
+    scheduleUserNotifications,
+    saveUserPreferences,
+    initializeSchedules,
+    isValidTime,
+    isValidDate,
+    getTimezoneForCity
 };
