@@ -697,30 +697,30 @@ Reply with the number (1-6):`);
     }
 }
 
-// Modify command handlers to handle direct commands
-bot.command('gt', async (ctx) => {
-    const userId = ctx.message.from.id;
-    userStates.set(userId, STATES.AWAITING_GT_INPUT);
-    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
-});
-
-bot.command('dgt', async (ctx) => {
-    const userId = ctx.message.from.id;
-    userStates.set(userId, STATES.AWAITING_DGT_INPUT);
-    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
-});
-
-bot.command('cgt', async (ctx) => {
-    const userId = ctx.message.from.id;
-    userStates.set(userId, STATES.AWAITING_CGT_INPUT);
-    await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
-});
-
-// Update init function to properly set command handlers
+// Move all bot command registrations inside init function
 function init(botInstance) {
     bot = botInstance;
     logger.info('BOT_INIT', 'Bot initialized');
     
+    // Register GT, DGT, CGT commands
+    bot.command('gt', async (ctx) => {
+        const userId = ctx.message.from.id;
+        userStates.set(userId, STATES.AWAITING_GT_INPUT);
+        await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+    });
+
+    bot.command('dgt', async (ctx) => {
+        const userId = ctx.message.from.id;
+        userStates.set(userId, STATES.AWAITING_DGT_INPUT);
+        await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+    });
+
+    bot.command('cgt', async (ctx) => {
+        const userId = ctx.message.from.id;
+        userStates.set(userId, STATES.AWAITING_CGT_INPUT);
+        await ctx.reply('Please enter city and date (e.g., Mumbai, 2025-06-19):');
+    });
+
     // Register all command handlers with error handling
     const commands = {
         'start': handleStartCommand,
@@ -765,7 +765,15 @@ function init(botInstance) {
             await ctx.reply('⚠️ Error processing message. Please try again.');
         }
     });
+
+    return bot;
 }
+
+// Remove the direct bot command registrations from outside init
+// Delete or comment out these lines:
+// bot.command('gt', async (ctx) => { ... });
+// bot.command('dgt', async (ctx) => { ... });
+// bot.command('cgt', async (ctx) => { ... });
 
 // Export all required functions and objects
 module.exports = {
