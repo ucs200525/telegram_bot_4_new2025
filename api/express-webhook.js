@@ -13,9 +13,23 @@ const bot = new Telegraf(process.env.BOT_TOKEN || '7274941037:AAHIWiU5yvfIzo7eJW
 botLogic.init(bot);
 
 const PORT = process.env.PORT || 3000;
+const WEBHOOK_PATH = '/webhook';
+const DOMAIN = process.env.DOMAIN || `https://your-domain.com`;
+
+// Update webhook setup
+async function setupWebhook() {
+    try {
+        const webhookUrl = `${DOMAIN}${WEBHOOK_PATH}`;
+        await bot.telegram.setWebhook(webhookUrl);
+        logger.info('WEBHOOK_SETUP', `Webhook set to ${webhookUrl}`);
+    } catch (error) {
+        logger.error('WEBHOOK_SETUP_ERROR', error.message);
+        throw error;
+    }
+}
 
 // Webhook route
-app.post('/webhook', async (req, res) => {
+app.post(WEBHOOK_PATH, async (req, res) => {
     try {
         if (!req.body) {
             return res.status(400).json({ error: 'No body provided' });
@@ -31,6 +45,15 @@ app.post('/webhook', async (req, res) => {
             message: error.message 
         });
     }
+});
+
+// Root route - add POST handler
+app.post('/', (req, res) => {
+    res.status(308).json({ 
+        ok: false,
+        error: 'Permanent Redirect',
+        location: WEBHOOK_PATH
+    });
 });
 
 // Health check route
@@ -54,7 +77,7 @@ app.use((req, res) => {
     });
 });
 
-// Initialize schedules if in development mode
+// Update initialization
 if (process.env.NODE_ENV === 'development') {
     (async () => {
         try {
@@ -69,9 +92,17 @@ if (process.env.NODE_ENV === 'development') {
     })();
 } else {
     // Webhook mode
-    app.listen(PORT, () => {
-        logger.info(`Bot is running in webhook mode on port ${PORT}...`);
-    });
+    (async () => {
+        try {
+            await setupWebhook();
+            app.listen(PORT, () => {
+                logger.info(`Bot is running in webhook mode on port ${PORT}...`);
+            });
+        } catch (error) {
+            logger.error('Error setting up webhook:', error);
+            process.exit(1);
+        }
+    })();
 }
 
 // Cleanup handlers

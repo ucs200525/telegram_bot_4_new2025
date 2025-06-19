@@ -13,8 +13,6 @@ class Database {
     async connect() {
         try {
             this.client = await MongoClient.connect(uri, {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
                 ssl: true,
                 tls: true,
                 tlsAllowInvalidCertificates: true,
