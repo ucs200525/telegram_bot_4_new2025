@@ -14,7 +14,7 @@ botLogic.init(bot);
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_PATH = '/webhook';
-const DOMAIN = process.env.DOMAIN || `https://your-domain.com`;
+const DOMAIN = process.env.DOMAIN || `https://telegram-bot-4-new2025.vercel.app/`;
 
 // Update webhook setup
 async function setupWebhook() {
